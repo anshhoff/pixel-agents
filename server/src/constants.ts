@@ -168,6 +168,18 @@ export const LAYOUT_FILE_POLL_INTERVAL_MS = 2000;
 export const LAYOUT_REVISION_KEY = 'layoutRevision';
 export const CONFIG_FILE_NAME = 'config.json';
 
+// ── Work Progress (stage track + done-today strip) ──────────
+/** A classified tool this long after the agent's previous one starts a fresh
+ *  EXPLORE · BUILD · TEST · SHIP cycle: the earlier work was another task. */
+export const PROGRESS_CYCLE_GAP_MS = 30 * 60 * 1000;
+/** Subdirectory of ~/.pixel-agents holding one <YYYY-MM-DD>.json of daily totals per local day. */
+export const DAILY_STATS_DIR_NAME = 'daily';
+/** Daily totals change on every command; they are written at most this often
+ *  (and flushed on dispose and at midnight). */
+export const DAILY_STATS_SAVE_DEBOUNCE_MS = 2_000;
+/** Title of a PR whose `gh pr create` passed no --title (e.g. --fill). */
+export const DEFAULT_PR_TITLE = 'PR';
+
 // ── Avatar Customization ────────────────────────────────────
 /** Number of pre-colored bundled character palettes (char_0.png–char_5.png).
  *  Mirrors `PALETTE_COUNT` in webview-ui/src/constants.ts; kept separate

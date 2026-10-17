@@ -3,6 +3,7 @@ import * as path from 'path';
 import type { AgentEvent, HookProvider } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { SESSION_END_GRACE_MS } from './constants.js';
+import type { ProgressTracker } from './progress/progressTracker.js';
 import { type RemoteSource, remoteSourceOf } from './remoteSource.js';
 import type { SessionRouter } from './sessionRouter.js';
 import { getInlineTeammates, hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
@@ -83,6 +84,8 @@ export class HookEventHandler {
     private provider: HookProvider,
     private sessionRouter: SessionRouter,
     private watchAllSessionsRef?: { current: boolean },
+    /** Stage track + daily totals; fed every tool start and end this handler sees. */
+    private progress?: ProgressTracker,
   ) {
     if (provider.protocolVersion !== HookEventHandler.SUPPORTED_PROTOCOL_VERSION) {
       console.warn(
@@ -379,7 +382,7 @@ export class HookEventHandler {
         // Both PostToolUse and PostToolUseFailure normalize to toolEnd. Distinguishing
         // them inside handlers would require extra info; the existing behavior was
         // identical for both (agentToolDone + clear currentHookToolId), so one branch suffices.
-        return this.handlePostToolUse(agent, agentId, hooksOnlyToolUseId(event, agent));
+        return this.handlePostToolUse(event, agent, agentId, hooksOnlyToolUseId(event, agent));
       case 'subagentStart':
         return this.provider.team ? this.handleSubagentStart(event, agent, agentId) : undefined;
       case 'subagentEnd':
@@ -462,6 +465,8 @@ export class HookEventHandler {
   ): void {
     const toolName = normEvent.toolName;
     const toolInput = (normEvent.input as Record<string, unknown> | undefined) ?? {};
+    // Counted before the display suppression below: the tool ran either way.
+    this.progress?.onToolStart(agentId, toolName, toolInput);
     const status = this.provider.formatToolStatus(toolName, toolInput);
     const hookToolId = toolUseId ?? `hook-${Date.now()}`;
     if (toolUseId) {
@@ -515,11 +520,34 @@ export class HookEventHandler {
   }
 
   /**
-   * Handle PostToolUse: no action needed. JSONL handles tool_result processing.
-   * Stop hook handles the idle transition. This is here for completeness and
-   * to serve as a confirmation event for pending external sessions.
+   * Handle PostToolUse / PostToolUseFailure: report the result to work progress
+   * (pushes, PRs). Otherwise little to do: JSONL handles tool_result processing
+   * and the Stop hook handles the idle transition. It also serves as a
+   * confirmation event for pending external sessions.
    */
-  private handlePostToolUse(agent: AgentState, agentId: number, toolUseId?: string): void {
+  private handlePostToolUse(
+    event: HookEvent,
+    agent: AgentState,
+    agentId: number,
+    toolUseId?: string,
+  ): void {
+    if (this.progress) {
+      // Work progress reads the raw payload: toolEnd names no tool, and the
+      // result (tool_response, or the relay's pr_url) and whether the tool
+      // failed exist only there.
+      this.progress.onToolEnd(
+        agentId,
+        typeof event.tool_name === 'string' ? event.tool_name : '',
+        typeof event.tool_input === 'object' && event.tool_input !== null
+          ? (event.tool_input as Record<string, unknown>)
+          : {},
+        {
+          response: event.tool_response,
+          prUrl: typeof event.pr_url === 'string' ? event.pr_url : undefined,
+          failed: event.hook_event_name === 'PostToolUseFailure',
+        },
+      );
+    }
     if (toolUseId) {
       const toolName = agent.activeToolNames.get(toolUseId);
       agent.activeToolIds.delete(toolUseId);

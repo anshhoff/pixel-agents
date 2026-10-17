@@ -1,5 +1,6 @@
 import type { AgentStateStore } from './agentStateStore.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
+import { getProgressTracker } from './transcriptParser.js';
 
 /**
  * Replay an agent's active state to a connecting client.
@@ -10,6 +11,7 @@ import { hasPromotedBackgroundAgent } from './teamUtils.js';
  * 3. Background tools with runInBackground + isTeammateSpawn flags, skipping promoted spawns
  * 4. Waiting status
  * 5. Context usage
+ * Then, once for the office: every agent's stage track and today's totals.
  */
 export function resendAgentActivity(
   send: (message: Record<string, unknown>) => void,
@@ -83,6 +85,15 @@ export function resendAgentActivity(
         contextTokens: agent.contextTokens,
         maxContextTokens: agent.maxContextTokens,
       });
+    }
+  }
+
+  // Work progress: an agentProgress per agent, then dailyStats. Looked up here
+  // rather than passed in, so both surfaces' resends carry it.
+  const progress = getProgressTracker();
+  if (progress?.tracks(store)) {
+    for (const message of progress.snapshot()) {
+      send({ ...message });
     }
   }
 }

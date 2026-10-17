@@ -39,13 +39,16 @@ import type { HookEvent } from './hookEventHandler.js';
 import { HookEventHandler } from './hookEventHandler.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { PathSet, pathsMatch } from './pathKey.js';
+import { ProgressTracker, type ProgressTrackerOptions } from './progress/progressTracker.js';
 import { SessionRouter } from './sessionRouter.js';
 import { SubagentWatch } from './subagentWatch.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import {
+  getProgressTracker,
   setBackgroundAgentCompletedCallback,
   setBackgroundAgentDetectedCallback,
   setHookProvider,
+  setProgressTracker,
   setTeamSwitchCallback,
 } from './transcriptParser.js';
 import type { AgentState } from './types.js';
@@ -56,6 +59,12 @@ export interface RuntimeLifecycleCallbacks {
   onAgentRemoved?: (agentId: number, agent: AgentState) => void;
   /** Called when a teammate is removed. */
   onTeammateRemoved?: (teammateId: number, agent: AgentState, source: string) => void;
+}
+
+export interface AgentRuntimeOptions {
+  /** Daily-totals location and clock. Default: ~/.pixel-agents/daily when the
+   *  store has a StateAdapter, in memory when it has none. */
+  progress?: ProgressTrackerOptions;
 }
 
 export class AgentRuntime {
@@ -84,17 +93,29 @@ export class AgentRuntime {
   readonly dismissalTracker = new DismissalTracker();
   /** Shadow-store watcher for unnamed background spawns (sub-agents). */
   readonly subagentWatch: SubagentWatch;
+  /** Stage track per agent + done-today totals (see progress/progressTracker.ts). */
+  readonly progress: ProgressTracker;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
 
   constructor(
     private readonly store: AgentStateStore,
     provider: HookProvider,
+    options: AgentRuntimeOptions = {},
   ) {
+    // Both surfaces set a StateAdapter before building the runtime. A bare store
+    // (tests) persists nothing else either, so its daily totals stay in memory
+    // rather than landing in whatever home directory the process has.
+    this.progress = new ProgressTracker(
+      store,
+      options.progress ?? (store.getAdapter() ? {} : { dailyDir: null }),
+    );
+
     // Wire module-level dependencies
     setDismissalTracker(this.dismissalTracker);
     setHookProvider(provider);
     setFileWatcherHookProvider(provider);
+    setProgressTracker(this.progress);
     this.subagentWatch = new SubagentWatch(store);
     setSubagentWatch(this.subagentWatch);
     if (provider.team) {
@@ -151,6 +172,7 @@ export class AgentRuntime {
       provider,
       new SessionRouter(),
       this.watchAllSessions,
+      this.progress,
     );
 
     // Wire hook lifecycle callbacks to shared agent operations
@@ -596,6 +618,8 @@ export class AgentRuntime {
   dispose(): void {
     this.hookEventHandler.dispose();
     this.subagentWatch.dispose();
+    this.progress.dispose();
+    if (getProgressTracker() === this.progress) setProgressTracker(null);
 
     if (this.projectScanTimer.current) {
       clearInterval(this.projectScanTimer.current);
