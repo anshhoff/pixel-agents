@@ -279,14 +279,42 @@ export const SENDER_EVENTS = [
 ];
 
 /**
+ * A Windows PowerShell 5.1 / PowerShell 7 one-liner with the same job as the
+ * computer curl command. It reads stdin as UTF-8 bytes itself ([Console]::In
+ * decodes with the console code page and mangles non-ASCII) and posts bytes
+ * (5.1's Invoke-RestMethod mangles non-ASCII string bodies). TLS 1.2 is added
+ * for older 5.1 setups. No double quotes, so it survives any argv quoting.
+ */
+function powershellPost(url) {
+  return (
+    "try { $ErrorActionPreference = 'Stop'; " +
+    '[Net.ServicePointManager]::SecurityProtocol = ' +
+    '[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; ' +
+    '$b = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.Encoding]::UTF8).ReadToEnd(); ' +
+    "$k = [IO.File]::ReadAllText($env:USERPROFILE + '\\.pixel-agents\\ingest-key').Trim(); " +
+    `Invoke-RestMethod -Uri '${url}' -Method Post -UseBasicParsing -TimeoutSec 5 ` +
+    "-ContentType 'application/json' -Headers @{ Authorization = 'Bearer ' + $k } " +
+    '-Body ([Text.Encoding]::UTF8.GetBytes($b)) | Out-Null } catch {}; exit 0'
+  );
+}
+
+/**
  * The settings.json `hooks` block that sends a machine's events to the relay.
  * Every hook is async, so a session never waits on the network.
  * - computer: user-level settings; the key is read from ~/.pixel-agents/ingest-key.
+ *   shell 'powershell' is for Windows without Git Bash; the key is read from
+ *   %USERPROFILE%\.pixel-agents\ingest-key.
  * - cloud: committed to a repo's .claude/settings.json; exits at once unless
  *   CLAUDE_CODE_REMOTE=true, and carries no key -- the cloud environment's
- *   network secret adds the Authorization header on the way out.
+ *   network secret adds the Authorization header on the way out. Bash only.
  */
-export function senderHooks({ url, cloud }) {
+export function senderHooks({ url, cloud, shell = 'bash' }) {
+  if (shell !== 'bash' && shell !== 'powershell') {
+    throw new Error(`invalid shell "${shell}" (bash or powershell)`);
+  }
+  if (cloud && shell === 'powershell') {
+    throw new Error('cloud senders run on Linux: use bash');
+  }
   let parsed;
   try {
     parsed = new URL(url);
@@ -296,18 +324,21 @@ export function senderHooks({ url, cloud }) {
   if (parsed.protocol !== 'https:' || /['"\s\\`$]/.test(url)) {
     throw new Error('the ingest URL must be a plain https:// URL');
   }
-  const auth = cloud ? '' : ` -H "Authorization: Bearer $(cat ~/.pixel-agents/ingest-key)"`;
-  const post =
-    `curl -s -m 5 -X POST -H 'Content-Type: application/json'${auth}` +
-    ` --data-binary @- '${url}' >/dev/null 2>&1`;
-  const command = cloud
-    ? `[ "$CLAUDE_CODE_REMOTE" = "true" ] || exit 0; ${post}; exit 0`
-    : `${post}; exit 0`;
+  let hook;
+  if (shell === 'powershell') {
+    hook = { type: 'command', shell, command: powershellPost(url), async: true, timeout: 10 };
+  } else {
+    const auth = cloud ? '' : ` -H "Authorization: Bearer $(cat ~/.pixel-agents/ingest-key)"`;
+    const post =
+      `curl -s -m 5 -X POST -H 'Content-Type: application/json'${auth}` +
+      ` --data-binary @- '${url}' >/dev/null 2>&1`;
+    const command = cloud
+      ? `[ "$CLAUDE_CODE_REMOTE" = "true" ] || exit 0; ${post}; exit 0`
+      : `${post}; exit 0`;
+    hook = { type: 'command', command, async: true, timeout: 10 };
+  }
   return Object.fromEntries(
-    SENDER_EVENTS.map((event) => [
-      event,
-      [{ matcher: '', hooks: [{ type: 'command', command, async: true, timeout: 10 }] }],
-    ]),
+    SENDER_EVENTS.map((event) => [event, [{ matcher: '', hooks: [{ ...hook }] }]]),
   );
 }
 
@@ -379,7 +410,11 @@ function main(argv) {
       return;
     }
     case 'sender-config': {
-      const hooks = senderHooks({ url: flag(args, 'url'), cloud: args.includes('--cloud') });
+      const hooks = senderHooks({
+        url: flag(args, 'url'),
+        cloud: args.includes('--cloud'),
+        shell: flag(args, 'shell'),
+      });
       console.log(JSON.stringify({ hooks }, null, 2));
       return;
     }
@@ -389,7 +424,7 @@ function main(argv) {
           '       relay.mjs add-source <id> --kind computer|cloud [--label L]\n' +
           '       relay.mjs remove-source <id>\n' +
           '       relay.mjs list\n' +
-          '       relay.mjs sender-config --url https://<host>/ingest [--cloud]',
+          '       relay.mjs sender-config --url https://<host>/ingest [--cloud] [--shell powershell]',
       );
       process.exitCode = command ? 1 : 0;
   }

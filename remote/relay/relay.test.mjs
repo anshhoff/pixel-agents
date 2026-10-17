@@ -54,6 +54,57 @@ describe('senderHooks', () => {
     );
     assert.throws(() => senderHooks({ url: 'not a url', cloud: true }));
   });
+
+  it('defaults to the bash curl hook, unchanged', () => {
+    const hooks = senderHooks({ url: URL_, cloud: false });
+    assert.deepEqual(senderHooks({ url: URL_, cloud: false, shell: 'bash' }), hooks);
+    assert.deepEqual(hooks.Stop[0].hooks[0], {
+      type: 'command',
+      command:
+        `curl -s -m 5 -X POST -H 'Content-Type: application/json'` +
+        ` -H "Authorization: Bearer $(cat ~/.pixel-agents/ingest-key)"` +
+        ` --data-binary @- '${URL_}' >/dev/null 2>&1; exit 0`,
+      async: true,
+      timeout: 10,
+    });
+  });
+
+  it('a powershell sender runs every hook async in powershell', () => {
+    const hooks = senderHooks({ url: URL_, cloud: false, shell: 'powershell' });
+    assert.deepEqual(Object.keys(hooks).sort(), [...SENDER_EVENTS].sort());
+    for (const event of SENDER_EVENTS) {
+      const [entry] = hooks[event];
+      assert.equal(entry.hooks.length, 1);
+      assert.equal(entry.hooks[0].type, 'command');
+      assert.equal(entry.hooks[0].shell, 'powershell');
+      assert.equal(entry.hooks[0].async, true);
+      assert.equal(entry.hooks[0].timeout, 10);
+    }
+  });
+
+  it('a powershell sender reads its key from USERPROFILE and posts UTF-8 bytes', () => {
+    const { command } = senderHooks({ url: URL_, cloud: false, shell: 'powershell' }).Stop[0]
+      .hooks[0];
+    assert.ok(command.includes(`$env:USERPROFILE + '\\.pixel-agents\\ingest-key'`));
+    assert.ok(command.includes(`-Uri '${URL_}'`));
+    assert.ok(command.includes("Authorization = 'Bearer ' + $k"));
+    assert.ok(command.includes('[Text.Encoding]::UTF8.GetBytes($b)'));
+    assert.ok(command.includes('-TimeoutSec 5'));
+    assert.ok(command.endsWith('} catch {}; exit 0'));
+    assert.equal(/[\r\n"]/.test(command), false);
+  });
+
+  it('rejects powershell for cloud senders and unknown shells', () => {
+    assert.throws(() => senderHooks({ url: URL_, cloud: true, shell: 'powershell' }), /Linux/);
+    assert.throws(() => senderHooks({ url: URL_, cloud: false, shell: 'zsh' }));
+    assert.throws(() =>
+      senderHooks({
+        url: "https://desk.ts.net/ingest'; calc; '",
+        cloud: false,
+        shell: 'powershell',
+      }),
+    );
+  });
 });
 
 function tmpDir() {

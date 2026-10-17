@@ -110,7 +110,8 @@ Below, `<host>` is your Funnel name, `<machine>.<tailnet>.ts.net` (step 2 shows 
 ## 3. Another computer
 
 Works from any network. Needs `bash` and `curl`: macOS, Linux, or Windows with Git Bash
-(Claude Code runs hooks in bash when Git Bash is installed). Use one source per computer.
+(Claude Code runs hooks in bash when Git Bash is installed). Windows without Git Bash: see the
+note at the end of this section. Use one source per computer.
 
 1. On that computer, save its source key (`laptop` above):
 
@@ -141,6 +142,29 @@ Works from any network. Needs `bash` and `curl`: macOS, Linux, or Windows with G
 5. Start a new Claude Code session there. A 💻 character appears on the board.
 
 Every hook is `async: true` and uses `curl -m 5`, so sessions never wait, even when this PC is off.
+
+**Windows without Git Bash.** Use PowerShell hooks instead (Windows PowerShell 5.1 or PowerShell 7).
+Steps 3 and 5 stay the same.
+
+- Step 1, save the key in PowerShell:
+
+  ```powershell
+  New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.pixel-agents" | Out-Null
+  Set-Content -NoNewline -Path "$env:USERPROFILE\.pixel-agents\ingest-key" -Value '<key>'
+  ```
+
+- Step 2, add `--shell powershell`. Each hook gets `"shell": "powershell"` and posts with `Invoke-RestMethod` (5 s timeout, still async):
+
+  ```powershell
+  node remote/relay/relay.mjs sender-config --url https://<host>/ingest --shell powershell
+  ```
+
+- Step 4, check the key with `curl.exe`. In Windows PowerShell, plain `curl` is `Invoke-WebRequest`:
+
+  ```powershell
+  $key = (Get-Content -Raw "$env:USERPROFILE\.pixel-agents\ingest-key").Trim()
+  curl.exe -i -X POST -H "Authorization: Bearer $key" -d '{}' https://<host>/ingest
+  ```
 
 ## 4. Cloud sessions
 
