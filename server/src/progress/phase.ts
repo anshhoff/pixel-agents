@@ -436,10 +436,17 @@ export function prTitleFromCommand(cmd: string): string | undefined {
       } else if (a.startsWith('--title=')) {
         title = a.slice('--title='.length);
       }
-      if (title?.trim()) return title.trim();
+      if (title?.trim()) return hasShellExpansion(title) ? undefined : title.trim();
     }
   }
   return undefined;
+}
+
+/** `$var`, `${…}`, `$(…)`, a backtick, or PowerShell's `$env:X`: the hook sees
+ *  the command before the shell expands it, so the text isn't the real title.
+ *  A `$` before a digit (a price) is literal. */
+function hasShellExpansion(text: string): boolean {
+  return /\$[A-Za-z_{(]|`/.test(text);
 }
 
 // ── Pull request urls ────────────────────────────────────────

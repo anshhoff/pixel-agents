@@ -240,6 +240,17 @@ describe('prTitleFromCommand', () => {
     expect(prTitleFromCommand('gh issue create --title "x"')).toBeUndefined();
     expect(prTitleFromCommand('echo --title "x"')).toBeUndefined();
   });
+
+  it('has no title when the title is an unexpanded shell expansion', () => {
+    // The hook sees the command before the shell expands it.
+    expect(prTitleFromCommand('gh pr create --title "[auto-post] $title"')).toBeUndefined();
+    expect(prTitleFromCommand('gh pr create --title "${TITLE}"')).toBeUndefined();
+    expect(prTitleFromCommand('gh pr create --title "$(git log -1 --format=%s)"')).toBeUndefined();
+    expect(prTitleFromCommand('gh pr create --title "`cat t.txt`"')).toBeUndefined();
+    expect(prTitleFromCommand('gh pr create --title $env:PR_TITLE')).toBeUndefined();
+    // A literal dollar amount is still a real title.
+    expect(prTitleFromCommand('gh pr create --title "Price is $5"')).toBe('Price is $5');
+  });
 });
 
 describe('PR urls', () => {
