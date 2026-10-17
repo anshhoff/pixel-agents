@@ -94,6 +94,19 @@ describe('destinations', () => {
     expect(isSmoking(ch)).toBe(false);
   });
 
+  it('asleep with no status ever received: still goes to the Lounge', () => {
+    // A long-idle session adopted from the session list never sends an
+    // agentStatus: its character keeps the default isActive=true. The
+    // server's agentSleep alone must be enough.
+    const os = zonedOffice();
+    const ch = agentAt(os, 1, 'd1');
+    os.setAgentSleeping(1, true);
+    run(os, 15);
+    expect(ch.isActive).toBe(false);
+    expect(ch.zoneTarget?.zone).toBe(ZoneLabel.LOUNGE);
+    expect(at(ch)).toEqual(seatTile(os, ch.zoneTarget!.key));
+  });
+
   it('asleep: a Lounge seat, sitting still, reserved while it is there', () => {
     const os = zonedOffice();
     const ch = waitingAt(os, 1, 'd1');

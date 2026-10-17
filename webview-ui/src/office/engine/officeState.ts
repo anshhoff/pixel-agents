@@ -618,7 +618,10 @@ export class OfficeState {
     if (directoryName) {
       ch.directoryName = directoryName;
     }
-    if (this.sleepingAgents.has(id)) ch.isSleeping = true;
+    if (this.sleepingAgents.has(id)) {
+      ch.isSleeping = true;
+      this.idleIfAsleep(ch);
+    }
     if (!skipSpawnEffect) {
       startMatrixEffect(ch, 'spawn');
     }
@@ -1435,10 +1438,22 @@ export class OfficeState {
     const ch = this.characters.get(id);
     if (!ch || (ch.isSleeping ?? false) === sleeping) return;
     ch.isSleeping = sleeping;
+    if (sleeping) this.idleIfAsleep(ch);
     // (A character the living office has sent somewhere is routed from there.)
     if (sleeping && !ch.isActive && ch.state !== CharacterState.TYPE && !ch.zoneTarget) {
       this.sendToSeat(id);
     }
+  }
+
+  /**
+   * The server only reports a session asleep once Claude's own session list
+   * calls it idle and its transcript has been quiet for a while, so asleep
+   * means not working — even for a long-idle session adopted from the list,
+   * which never sent an agentStatus and so still has the default
+   * isActive=true. Live tools win: that's activity the wake hasn't reached yet.
+   */
+  private idleIfAsleep(ch: Character): void {
+    if (this.zoneSignalsFor(ch.id).tools.size === 0) ch.isActive = false;
   }
 
   // ── Living office: the destination engine's signals ────────────
