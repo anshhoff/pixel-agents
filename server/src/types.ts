@@ -39,6 +39,10 @@ export interface AgentState {
   remoteSource?: RemoteSource;
   /** Provider that created this agent (defaults to 'claude') */
   providerId?: string;
+  /** Adopted by the LocalSessionWatcher because `claude agents` listed its session
+   *  (localSessions.ts). Only such agents are removed when their session leaves
+   *  the list. Transient — not persisted. */
+  fromSessionList?: true;
   /** Set when SessionEnd(reason=clear) fires; cleared when SessionStart(source=clear) reassigns */
   pendingClear?: boolean;
   /** Hook-generated tool ID for PreToolUse/PostToolUse correlation */

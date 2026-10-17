@@ -38,6 +38,12 @@ import {
 } from './fileWatcher.js';
 import type { HookEvent } from './hookEventHandler.js';
 import { HookEventHandler } from './hookEventHandler.js';
+import {
+  getLocalSessionWatcher,
+  LocalSessionWatcher,
+  type LocalSessionWatcherOptions,
+  setLocalSessionWatcher,
+} from './localSessions.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { PathSet, pathsMatch } from './pathKey.js';
 import { ProgressTracker, type ProgressTrackerOptions } from './progress/progressTracker.js';
@@ -66,6 +72,9 @@ export interface AgentRuntimeOptions {
   /** Daily-totals location and clock. Default: ~/.pixel-agents/daily when the
    *  store has a StateAdapter, in memory when it has none. */
   progress?: ProgressTrackerOptions;
+  /** Session list, clock and home dir for the LocalSessionWatcher (tests).
+   *  Default: `claude agents --json`, Date.now, os.homedir. */
+  localSessions?: LocalSessionWatcherOptions;
 }
 
 export class AgentRuntime {
@@ -96,12 +105,15 @@ export class AgentRuntime {
   readonly subagentWatch: SubagentWatch;
   /** Stage track per agent + done-today totals (see progress/progressTracker.ts). */
   readonly progress: ProgressTracker;
+  /** Keeps every open local session on the board and puts idle ones to sleep
+   *  (see localSessions.ts). Polls only once started -- the standalone CLI does. */
+  readonly localSessions: LocalSessionWatcher;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
 
   constructor(
     private readonly store: AgentStateStore,
-    provider: HookProvider,
+    private readonly provider: HookProvider,
     options: AgentRuntimeOptions = {},
   ) {
     // Both surfaces set a StateAdapter before building the runtime. A bare store
@@ -111,6 +123,16 @@ export class AgentRuntime {
       store,
       options.progress ?? (store.getAdapter() ? {} : { dailyDir: null }),
     );
+    this.localSessions = new LocalSessionWatcher(
+      store,
+      {
+        adopt: (sessionId, transcriptPath, cwd) =>
+          this.adoptListedSession(sessionId, transcriptPath, cwd),
+        remove: (id) => this.removeEndedSession(id),
+      },
+      options.localSessions,
+    );
+    setLocalSessionWatcher(this.localSessions);
 
     // Wire module-level dependencies
     setDismissalTracker(this.dismissalTracker);
@@ -199,65 +221,7 @@ export class AgentRuntime {
           );
           return;
         }
-        const projectDir = transcriptPath ? path.dirname(transcriptPath) : cwd;
-        // Teammate session of a tracked lead? Attach it as a teammate character
-        // instead of adopting a generic external agent -- and regardless of the
-        // Watch All Sessions setting: tracking the lead is the opt-in for its
-        // team. (Newer harnesses run every spawned agent as an independent
-        // top-level session that fires its own hooks.)
-        if (transcriptPath) {
-          const teamMeta = provider.team?.getTeamMetadataForSession(transcriptPath);
-          if (teamMeta?.teamName && teamMeta.agentName) {
-            for (const [leadId, lead] of this.store) {
-              if (lead.teamName !== teamMeta.teamName || lead.leadAgentId !== undefined) continue;
-              console.log(
-                `[Pixel Agents] Hook: session ${sessionId.slice(0, 8)}... is teammate "${teamMeta.agentName}" of Agent ${leadId}, attaching`,
-              );
-              scanForTeammateFiles(
-                lead.projectDir,
-                lead.sessionId,
-                leadId,
-                this.store.nextAgentId,
-                this.store,
-                this.fileWatchers,
-                this.pollingTimers,
-                this.waitingTimers,
-                this.permissionTimers,
-                () => this.store.persist(),
-                undefined,
-              );
-              break;
-            }
-            // Done only if discovery actually adopted this transcript. Old-style
-            // tmux teammates (non-UUID transcript names outside discovery's scan)
-            // fall through to normal external adoption and self-identify from
-            // their record tags.
-            for (const a of this.store.values()) {
-              if (pathsMatch(a.jsonlFile, transcriptPath)) return;
-            }
-          }
-        }
-        if (!isTrackedProjectDir(projectDir) && !this.watchAllSessions.current) {
-          console.log(
-            `[Pixel Agents] Hook: external session ${sessionId.slice(0, 8)}... not adopted ` +
-              `(project untracked, Watch All Sessions off)`,
-          );
-          return;
-        }
-        adoptExternalSessionFromHook(
-          sessionId,
-          transcriptPath,
-          cwd,
-          this.knownJsonlFiles,
-          this.store.nextAgentId,
-          this.store,
-          this.fileWatchers,
-          this.pollingTimers,
-          this.waitingTimers,
-          this.permissionTimers,
-          () => this.store.persist(),
-          (agent) => this.registerAgent(agent.sessionId, agent.id),
-        );
+        this.adoptLocalSession(sessionId, transcriptPath, cwd, false);
       },
       onSessionClear: (agentId, newSessionId, newTranscriptPath) => {
         if (newTranscriptPath) {
@@ -345,6 +309,121 @@ export class AgentRuntime {
   /** Unregister an agent from the hook event handler. */
   unregisterAgent(sessionId: string): void {
     this.hookEventHandler.unregisterAgent(sessionId);
+  }
+
+  // ── Local session adoption ──
+
+  /**
+   * Adopt a session running on this machine: as a teammate when its transcript
+   * names a tracked lead's team, else as an external agent. A hook-detected
+   * session needs its project tracked or Watch All Sessions on; one the
+   * open-session list names (`anyProject`) is adopted wherever it runs -- having
+   * every open session on the board is that list's purpose.
+   */
+  private adoptLocalSession(
+    sessionId: string,
+    transcriptPath: string | undefined,
+    cwd: string,
+    anyProject: boolean,
+  ): void {
+    const projectDir = transcriptPath ? path.dirname(transcriptPath) : cwd;
+    // Teammate session of a tracked lead? Attach it as a teammate character
+    // instead of adopting a generic external agent -- and regardless of the
+    // Watch All Sessions setting: tracking the lead is the opt-in for its
+    // team. (Newer harnesses run every spawned agent as an independent
+    // top-level session that fires its own hooks.)
+    if (transcriptPath) {
+      const teamMeta = this.provider.team?.getTeamMetadataForSession(transcriptPath);
+      if (teamMeta?.teamName && teamMeta.agentName) {
+        for (const [leadId, lead] of this.store) {
+          if (lead.teamName !== teamMeta.teamName || lead.leadAgentId !== undefined) continue;
+          console.log(
+            `[Pixel Agents] Hook: session ${sessionId.slice(0, 8)}... is teammate "${teamMeta.agentName}" of Agent ${leadId}, attaching`,
+          );
+          scanForTeammateFiles(
+            lead.projectDir,
+            lead.sessionId,
+            leadId,
+            this.store.nextAgentId,
+            this.store,
+            this.fileWatchers,
+            this.pollingTimers,
+            this.waitingTimers,
+            this.permissionTimers,
+            () => this.store.persist(),
+            undefined,
+          );
+          break;
+        }
+        // Done only if discovery actually adopted this transcript. Old-style
+        // tmux teammates (non-UUID transcript names outside discovery's scan)
+        // fall through to normal external adoption and self-identify from
+        // their record tags.
+        for (const a of this.store.values()) {
+          if (pathsMatch(a.jsonlFile, transcriptPath)) return;
+        }
+      }
+    }
+    if (!anyProject && !isTrackedProjectDir(projectDir) && !this.watchAllSessions.current) {
+      console.log(
+        `[Pixel Agents] Hook: external session ${sessionId.slice(0, 8)}... not adopted ` +
+          `(project untracked, Watch All Sessions off)`,
+      );
+      return;
+    }
+    adoptExternalSessionFromHook(
+      sessionId,
+      transcriptPath,
+      cwd,
+      this.knownJsonlFiles,
+      this.store.nextAgentId,
+      this.store,
+      this.fileWatchers,
+      this.pollingTimers,
+      this.waitingTimers,
+      this.permissionTimers,
+      () => this.store.persist(),
+      (agent) => this.registerAgent(agent.sessionId, agent.id),
+    );
+  }
+
+  /** LocalSessionHost.adopt: the id of the agent adopting `transcriptPath`
+   *  created, or undefined when it created none (dismissed, already tracked). */
+  private adoptListedSession(
+    sessionId: string,
+    transcriptPath: string,
+    cwd: string,
+  ): number | undefined {
+    const before = new Set(this.store.keys());
+    this.adoptLocalSession(sessionId, transcriptPath, cwd, true);
+    for (const [id, agent] of this.store) {
+      if (!before.has(id) && pathsMatch(agent.jsonlFile, transcriptPath)) return id;
+    }
+    return undefined;
+  }
+
+  /** LocalSessionHost.remove: the session's process ended without a SessionEnd,
+   *  so end it the way one would (see onSessionEnd) -- its teammates and
+   *  sub-agents go with it, and its transcript is dismissed so no scanner
+   *  re-adopts it. */
+  private removeEndedSession(id: number): void {
+    const agent = this.store.get(id);
+    if (!agent) return;
+    this.dismissalTracker.clearSeededMtime(agent.jsonlFile);
+    this.dismissalTracker.dismiss(agent.jsonlFile);
+    this.removeTeammates(id);
+    this.subagentWatch.removeByLead(id);
+    this.unregisterAgent(agent.sessionId);
+    this.removeAgent(id);
+  }
+
+  /** Start keeping every open local session on the board (standalone only). */
+  startLocalSessionWatch(): void {
+    this.localSessions.start();
+  }
+
+  stopLocalSessionWatch(): void {
+    this.localSessions.stop();
   }
 
   // ── Agent removal (shared cleanup) ──
@@ -620,6 +699,9 @@ export class AgentRuntime {
 
   /** Clean up all scanners, timers, and agents. Called on shutdown. */
   dispose(): void {
+    // First, so the removals below are not read as dismissals of open sessions.
+    this.localSessions.dispose();
+    if (getLocalSessionWatcher() === this.localSessions) setLocalSessionWatcher(null);
     this.hookEventHandler.dispose();
     this.subagentWatch.dispose();
     this.progress.dispose();

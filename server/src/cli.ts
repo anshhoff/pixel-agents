@@ -26,12 +26,14 @@ import {
   readConfig,
 } from './configPersistence.js';
 import {
+  LOCAL_SESSIONS_ENABLED_ENV,
   MAX_PORT,
   MIN_PORT,
   TERMINAL_DISABLED_BY_FLAG_REASON,
   WILDCARD_HOSTNAMES,
 } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
+import { localSessionWatchEnabled } from './localSessions.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
 import { PtySessionManager } from './terminal/ptySessionManager.js';
@@ -402,6 +404,15 @@ async function main(): Promise<void> {
       runtime.startProjectScan(projectDir);
       runtime.startExternalScanning(projectDir);
       runtime.startStaleCheck();
+    }
+    // Every Claude Code session open on this machine, idle ones included, from
+    // `claude agents --json` (standalone only: the VS Code adapter doesn't start it).
+    if (localSessionWatchEnabled()) {
+      runtime.startLocalSessionWatch();
+    } else {
+      console.log(
+        `[Pixel Agents] Session list off (${LOCAL_SESSIONS_ENABLED_ENV}): idle open sessions are not adopted.`,
+      );
     }
 
     // The URL the operator opens has to be REACHABLE (a wildcard bind address

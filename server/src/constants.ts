@@ -29,6 +29,34 @@ export const EXTERNAL_STALE_CHECK_INTERVAL_MS = 30_000;
  *  so the file's mtime becomes stale before the dismissal expires. */
 export const DISMISSED_COOLDOWN_MS = 180_000; // 3 minutes
 
+// ── Local Session List (sleeping chibis, standalone only) ───
+/** How often the open-session list (`claude agents --json`) is read. */
+export const LOCAL_SESSIONS_POLL_MS = 15_000;
+/** An idle session whose last activity is older than this is drawn asleep. */
+export const SLEEP_AFTER_MS = 10 * 60 * 1000;
+/** A session-list-adopted agent whose session is missing from this many
+ *  successful listings in a row ended without a SessionEnd, and is removed. */
+export const LOCAL_SESSIONS_MISSING_POLLS_TO_REMOVE = 2;
+/** Kill a hung `claude agents --json` after this long. */
+export const LOCAL_SESSIONS_LIST_TIMEOUT_MS = 10_000;
+/** Cap on the listing's stdout; past it the run fails rather than grows. */
+export const LOCAL_SESSIONS_LIST_MAX_BUFFER = 2 * 1024 * 1024;
+/** Arguments that make Claude Code print its open sessions as JSON. */
+export const LOCAL_SESSIONS_LIST_ARGS = ['agents', '--json'] as const;
+/** Executable that lists the sessions, found on PATH (run with execFile, never a shell). */
+export const LOCAL_SESSIONS_BIN_WIN32 = 'claude.exe';
+export const LOCAL_SESSIONS_BIN_POSIX = 'claude';
+/** Environment variable naming a different executable to list the sessions with. */
+export const LOCAL_SESSIONS_BIN_ENV = 'PIXEL_AGENTS_CLAUDE_BIN';
+/** Environment variable that turns the session list off (standalone): set it to
+ *  one of LOCAL_SESSIONS_OFF_VALUES. Test harnesses whose `claude` is a mock
+ *  (or must never run the real one) set it. */
+export const LOCAL_SESSIONS_ENABLED_ENV = 'PIXEL_AGENTS_SESSION_LIST';
+export const LOCAL_SESSIONS_OFF_VALUES = ['0', 'false', 'off', 'no'] as const;
+/** Where, under the home directory, the listed sessions' transcripts live
+ *  (one <encoded cwd>/ dir per project, one <sessionId>.jsonl per session). */
+export const LOCAL_SESSIONS_PROJECTS_SUBPATH = ['.claude', 'projects'] as const;
+
 // ── Context Window Usage ────────────────────────────────────
 /** Window size assumed until a transcript proves otherwise. Transcripts never
  *  state the model's context limit, so this is the floor, not the truth. */

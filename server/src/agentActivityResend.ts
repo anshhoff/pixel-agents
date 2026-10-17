@@ -1,4 +1,5 @@
 import type { AgentStateStore } from './agentStateStore.js';
+import { getLocalSessionWatcher } from './localSessions.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { getProgressTracker } from './transcriptParser.js';
 
@@ -11,7 +12,8 @@ import { getProgressTracker } from './transcriptParser.js';
  * 3. Background tools with runInBackground + isTeammateSpawn flags, skipping promoted spawns
  * 4. Waiting status
  * 5. Context usage
- * Then, once for the office: every agent's stage track and today's totals.
+ * Then, once for the office: every agent's stage track and today's totals,
+ * and an agentSleep for each sleeping agent.
  */
 export function resendAgentActivity(
   send: (message: Record<string, unknown>) => void,
@@ -93,6 +95,15 @@ export function resendAgentActivity(
   const progress = getProgressTracker();
   if (progress?.tracks(store)) {
     for (const message of progress.snapshot()) {
+      send({ ...message });
+    }
+  }
+
+  // Sleeping agents (idle open sessions, see localSessions.ts). Looked up the
+  // same way; only agents asleep right now are sent -- awake is the default.
+  const sleep = getLocalSessionWatcher();
+  if (sleep?.tracks(store)) {
+    for (const message of sleep.snapshot()) {
       send({ ...message });
     }
   }
