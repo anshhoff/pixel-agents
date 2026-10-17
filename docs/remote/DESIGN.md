@@ -89,13 +89,16 @@ The hooks list is the same 12 events Pixel Agents installs locally. Every entry 
 
 ## Tasks
 
-- [ ] Relay: tests, implementation, CLI
-- [ ] Fork 1: remote adoption + auto-adopt (tests)
-- [ ] Fork 2: tool_use_id tool tracking + Subtask for hooks-only (tests)
-- [ ] Fork 3: sourceLabel/sourceKind protocol + overlay badge
-- [ ] Fork 4: remote expiry (tests)
-- [ ] Sender templates + install scripts
-- [ ] Full check suite green (`check-types`, `lint`, tests)
+- [x] Relay: tests, implementation, CLI
+- [x] Fork 1: remote adoption + auto-adopt (tests)
+- [x] Fork 2: tool_use_id tool tracking + Subtask for hooks-only (tests)
+- [x] Fork 3: sourceLabel/sourceKind protocol + overlay badge
+- [x] Fork 4: remote expiry (tests)
+- [x] Sender templates (`relay.mjs sender-config`) + setup guide (`remote/README.md`)
+- [x] Full check suite green (`check-types`, `lint`, tests; 5 pre-existing Windows-only
+      server failures in mockClaudeRunner/rotateToken, unchanged)
+- [x] End-to-end: fake cloud session through the running relay → board shows
+      `☁ Selftest · hobbyfi-web`, Subtask created/cleared, wrong key → 401
 - [ ] Run on this PC: build, start on :3100, relay on :3199, auto-start at login
 - [ ] Tailscale Funnel (needs user sign-in), end-to-end test with a fake remote event
 - [ ] Other computer + cloud environment setup (needs user)
