@@ -7,6 +7,7 @@ import type {
   HooksConsentRequest,
   WorkPhase,
 } from '../../../core/src/messages.js';
+import { playBellSound } from '../celebrationSound.js';
 import { playDoneSound, playPermissionSound, setSoundEnabled } from '../notificationSound.js';
 import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingAgents.js';
 import { reconcileExistingAgents } from '../office/engine/existingAgents.js';
@@ -596,6 +597,7 @@ export function useExtensionMessages(
         const status = msg.status as string;
         const permissionActive = msg.permissionActive as boolean | undefined;
         markSeenActivity(id);
+        os.celebrations.noteTool(id, status, Date.now()); // who shipped (phase B)
         setAgentTools((prev) => {
           const list = prev[id] || [];
           if (list.some((t) => t.toolId === toolId)) return prev;
@@ -770,6 +772,7 @@ export function useExtensionMessages(
         const parentToolId = msg.parentToolId as string;
         const toolId = msg.toolId as string;
         const status = msg.status as string;
+        os.celebrations.noteTool(id, status, Date.now()); // a helper ships for its parent
         setSubagentTools((prev) => {
           const agentSubs = prev[id] || {};
           const list = agentSubs[parentToolId] || [];
@@ -1034,7 +1037,7 @@ export function useExtensionMessages(
         if (transition === 'toWorker') makeWorker(os, id);
         else if (transition === 'toCharacter') makeCharacter(os, id);
       } else if (msg.type === 'dailyStats') {
-        setDailyStats({
+        const stats: DailyStats = {
           type: 'dailyStats',
           date: msg.date as string,
           prs: Array.isArray(msg.prs) ? msg.prs : [],
@@ -1042,7 +1045,10 @@ export function useExtensionMessages(
           filesEdited: (msg.filesEdited as number) ?? 0,
           commandsRun: (msg.commandsRun as number) ?? 0,
           activeMs: (msg.activeMs as number) ?? 0,
-        });
+        };
+        setDailyStats(stats);
+        // A push or PR landed: bell, confetti, trophy (phase B).
+        if (os.celebrate(stats) > 0) playBellSound();
       }
     };
     const unsubscribe = transport.onMessage(handler);

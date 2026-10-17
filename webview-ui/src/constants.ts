@@ -212,6 +212,76 @@ export const PERMISSION_NOTE_2_START_SEC = 0.12;
 export const PERMISSION_NOTE_DURATION_SEC = 0.15;
 export const PERMISSION_VOLUME = 0.12;
 
+// ── Celebrations (living office phase B: a push or PR lands) ─
+// docs/office/DESIGN.md "B. Celebrations": a bell on the shipper's desk, a
+// confetti burst over them, and a trophy on the trophy wall.
+/** A `git push` / `gh pr create` this recent (ms) claims a new push / PR. */
+export const SHIP_ATTRIBUTION_WINDOW_MS = 10 * 60_000;
+/** The bell that appears on the shipping agent's desk (office pack). */
+export const BELL_FURNITURE_TYPE = 'BELL';
+/** It stands on the desk top up to this many tiles ahead of the seat (past
+ *  a desk's walk-behind background row). */
+export const BELL_DESK_DEPTH = 2;
+/** How long the bell stays on the desk. */
+export const BELL_SHOW_SEC = 3;
+/** Its ring: a sideways wobble at this rate... */
+export const BELL_WOBBLE_HZ = 6;
+/** ...swinging this far (sprite px) at first... */
+export const BELL_WOBBLE_PX = 1.5;
+/** ...and still after this long. */
+export const BELL_WOBBLE_SEC = 1.6;
+/** The bell sound: a struck bell, a fundamental plus inharmonic partials. */
+export const BELL_SOUND_FUNDAMENTAL_HZ = 1046.5; // C6
+export const BELL_SOUND_PARTIALS: ReadonlyArray<{
+  ratio: number;
+  gain: number;
+  decaySec: number;
+}> = [
+  { ratio: 1, gain: 1, decaySec: 1.4 },
+  { ratio: 2.76, gain: 0.4, decaySec: 0.7 },
+  { ratio: 5.4, gain: 0.15, decaySec: 0.35 },
+];
+export const BELL_SOUND_VOLUME = 0.07;
+export const BELL_SOUND_ATTACK_SEC = 0.005;
+/** Confetti: particles per burst, launched from this far above the feet (px). */
+export const CONFETTI_PARTICLE_COUNT = 40;
+export const CONFETTI_ORIGIN_DY = -26;
+/** Each particle lives 80-100% of this long, fading out over the last CONFETTI_FADE_SEC. */
+export const CONFETTI_LIFE_SEC = 2.5;
+export const CONFETTI_LIFE_MIN_FRACTION = 0.8;
+export const CONFETTI_FADE_SEC = 0.8;
+/** Launch speed range (sprite px/s) inside a cone this wide (radians) around straight up. */
+export const CONFETTI_SPEED_MIN = 45;
+export const CONFETTI_SPEED_MAX = 100;
+export const CONFETTI_SPREAD_RAD = Math.PI * 0.7;
+/** Gravity (px/s²), paper-like terminal fall speed (px/s), sideways air drag (1/s). */
+export const CONFETTI_GRAVITY = 150;
+export const CONFETTI_TERMINAL_VY = 40;
+export const CONFETTI_DRAG = 1.5;
+/** A flake flips between 2×1 and 1×1 px this often (flips per second). */
+export const CONFETTI_FLIP_HZ = 5;
+export const CONFETTI_COLORS: readonly string[] = [
+  '#f2c94c', // gold
+  '#eb5757', // red
+  '#56ccf2', // sky
+  '#6fcf97', // green
+  '#bb6bd9', // purple
+  '#f2994a', // orange
+];
+/** Trophy wall: shelves are these bookshelves (in the Lounge, when the layout has one). */
+export const TROPHY_SHELF_TYPE = 'DOUBLE_BOOKSHELF';
+/** PRs are cups, in this order (cycling)... */
+export const TROPHY_CUP_TYPES: readonly string[] = [
+  'TROPHY_CUP_GOLD',
+  'TROPHY_CUP_SILVER',
+  'TROPHY_CUP_BRONZE',
+];
+/** ...pushes are boxes, one per push after the cups. */
+export const TROPHY_BOX_TYPE = 'TROPHY_BOX';
+/** A trophy stands in its shelf's gap: one tile right of the shelf's top-left. */
+export const TROPHY_SLOT_DCOL = 1;
+export const TROPHY_SLOT_DROW = 0;
+
 // ── Furniture Animation ─────────────────────────────────────
 export const FURNITURE_ANIM_INTERVAL_SEC = 0.2;
 
