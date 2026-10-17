@@ -22,6 +22,7 @@ import {
   ensureProjectScan,
   isTrackedProjectDir,
   reassignAgentToFile,
+  restoredDirectoryName,
   scanForBackgroundAgentFiles,
   scanForTeammateFiles,
   setAgentRemovalCallback,
@@ -567,7 +568,10 @@ export class AgentRuntime {
         // Live spawn ids survive the restart so the 1s scan can re-adopt the
         // spawns' transcripts and the completion queue-op still matches.
         backgroundAgentToolIds: new Set(p.backgroundAgentToolIds ?? []),
-        directoryName: p.directoryName ?? p.folderName,
+        // The transcript's own cwd outranks the persisted label, which older
+        // builds guessed from the encoded project dir ("automation" for
+        // hobbyfi-blog-automation); the next persist writes the corrected one.
+        directoryName: restoredDirectoryName(p.jsonlFile) ?? p.directoryName ?? p.folderName,
         teamName: p.teamName,
         agentName: p.agentName,
         isTeamLead: p.isTeamLead,

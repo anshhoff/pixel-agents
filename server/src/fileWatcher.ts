@@ -49,6 +49,7 @@ import { pathsMatch } from './pathKey.js';
 import type { RemoteSource } from './remoteSource.js';
 import type { SubagentWatch } from './subagentWatch.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
+import { cwdFromTranscript } from './transcriptCwd.js';
 import { getHookProvider, processTranscriptLine } from './transcriptParser.js';
 import type { AgentState } from './types.js';
 
@@ -604,9 +605,41 @@ export type DirectoryNameResolver = (ctx: {
 
 let directoryNameResolver: DirectoryNameResolver | null = null;
 
-/** Register the host's cwd/projectDir → Directory name resolver (VS Code only). */
-export function setDirectoryNameResolver(resolver: DirectoryNameResolver): void {
+/** Register the host's cwd/projectDir → Directory name resolver (VS Code only).
+ *  null unregisters it (tests). */
+export function setDirectoryNameResolver(resolver: DirectoryNameResolver | null): void {
   directoryNameResolver = resolver;
+}
+
+/**
+ * Directory name for a transcript-backed session. The host resolver wins (VS
+ * Code maps it to a workspace folder). Otherwise the basename of the real cwd:
+ * the hook's when it supplied one, else the one the transcript itself records.
+ * The encoded project dir has lost which dashes were separators
+ * ("hobbyfi-blog-automation" would read "automation"), so that guess is only
+ * the last resort.
+ */
+function directoryNameForTranscript(
+  jsonlFile: string,
+  projectDir: string,
+  hookCwd?: string,
+): string {
+  const cwd = hookCwd || cwdFromTranscript(jsonlFile);
+  const resolved = directoryNameResolver?.({ cwd, projectDir });
+  if (resolved !== undefined) return resolved;
+  return (cwd && path.basename(cwd)) || directoryNameFromProjectDir(path.basename(projectDir));
+}
+
+/**
+ * The label a restored agent should carry instead of its persisted one, or
+ * undefined to keep the persisted one. Standalone only (no host resolver): a
+ * persisted label may be the old encoded-dir guess, and keeping it would make
+ * the wrong name stick across restarts. The transcript's cwd is the truth.
+ */
+export function restoredDirectoryName(jsonlFile: string): string | undefined {
+  if (directoryNameResolver) return undefined;
+  const cwd = cwdFromTranscript(jsonlFile);
+  return (cwd && path.basename(cwd)) || undefined;
 }
 
 /**
@@ -1040,11 +1073,7 @@ export function adoptExternalSessionFromHook(
 
     knownJsonlFiles.add(transcriptPath);
     const projectDir = path.dirname(transcriptPath);
-    // The hook's cwd is the real path; the encoded project dir has lost which
-    // dashes were separators ("hobbyfi-blog-automation" would read "automation").
-    const directoryName =
-      directoryNameResolver?.({ cwd, projectDir }) ??
-      (cwd ? path.basename(cwd) : directoryNameFromProjectDir(path.basename(projectDir)));
+    const directoryName = directoryNameForTranscript(transcriptPath, projectDir, cwd);
 
     adoptExternalSession(
       transcriptPath,
@@ -1393,7 +1422,8 @@ export function scanExternalDir(
   }
 }
 
-/** Derive a readable Directory name from the Claude project dir hash. */
+/** Last-resort Directory name from the Claude project dir hash: its final
+ *  dash-separated segment. Lossy — prefer the real cwd (directoryNameForTranscript). */
 function directoryNameFromProjectDir(dirName: string): string {
   const parts = dirName.replace(/^-+/, '').split('-');
   return parts[parts.length - 1] || dirName;
@@ -1461,9 +1491,7 @@ function scanGlobalProjectDirs(
         continue;
       }
 
-      const directoryName =
-        directoryNameResolver?.({ projectDir: dirPath }) ??
-        directoryNameFromProjectDir(path.basename(dirPath));
+      const directoryName = directoryNameForTranscript(file, dirPath);
       knownJsonlFiles.add(file);
       console.log(
         `[Pixel Agents] Watcher: detected global session ${path.basename(file)} (${directoryName})`,
