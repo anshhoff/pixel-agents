@@ -45,25 +45,35 @@ export function anchorTile(
 export function helperSeat(
   parent: AnchorLike | undefined,
   seats: ReadonlyMap<string, SeatLike>,
+  prefer?: (uid: string) => boolean,
 ): string | null {
   const at = anchorTile(parent, seats);
-  return at ? closestFreeSeat(seats, at.col, at.row) : null;
+  return at ? closestFreeSeat(seats, at.col, at.row, prefer) : null;
 }
 
-/** Free seat closest (Manhattan) to a tile — seats teammates beside their lead. */
+/**
+ * Free seat closest (Manhattan) to a tile — seats teammates beside their lead.
+ * With `prefer` (the living office's "is this a desk, not a room seat?"), the
+ * closest preferred seat wins and any other seat is only the fallback.
+ */
 export function closestFreeSeat(
   seats: ReadonlyMap<string, SeatLike>,
   col: number,
   row: number,
+  prefer?: (uid: string) => boolean,
 ): string | null {
   let best: string | null = null;
   let bestDist = Infinity;
+  let bestPreferred = false;
   for (const [uid, seat] of seats) {
     if (seat.assigned) continue;
+    const preferred = prefer ? prefer(uid) : false;
+    if (bestPreferred && !preferred) continue;
     const d = Math.abs(seat.seatCol - col) + Math.abs(seat.seatRow - row);
-    if (d < bestDist) {
+    if (d < bestDist || (preferred && !bestPreferred)) {
       best = uid;
       bestDist = d;
+      bestPreferred = preferred;
     }
   }
   return best;

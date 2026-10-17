@@ -11,6 +11,8 @@ import { DirectoryModal } from './components/DirectoryModal.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { IntroBubble } from './components/IntroBubble.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
+import type { RemoteWorkerInputs } from './components/RemoteWorkers.js';
+import { RemoteWorkersChip, RemoteWorkersPanel } from './components/RemoteWorkers.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { TerminalDrawer } from './components/TerminalDrawer.js';
 import { Tooltip } from './components/Tooltip.js';
@@ -24,6 +26,7 @@ import {
   FIT_MARGINS_MOBILE,
   OFFICE_CANVAS_TEST_ID,
 } from './constants.js';
+import { officeAgentIds } from './hooks/agentKindState.js';
 import { useCameraFit } from './hooks/useCameraFit.js';
 import { useDirectoryEditor } from './hooks/useDirectoryEditor.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
@@ -98,6 +101,8 @@ function App() {
     agentProgress,
     agentSleep,
     dailyStats,
+    agentTitles,
+    backgroundAgents,
     layoutReady,
     layoutWasReset,
     loadedAssets,
@@ -144,6 +149,39 @@ function App() {
   const [hooksTooltipDismissed, setHooksTooltipDismissed] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState(false);
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
+
+  // Background agents get a Remote Workers tile instead of a character, so
+  // they stay out of the office overlay and the card bars.
+  const officeAgents = useMemo(
+    () => officeAgentIds(agents, backgroundAgents),
+    [agents, backgroundAgents],
+  );
+  const remoteWorkers = useMemo(() => {
+    const inputs: RemoteWorkerInputs = {};
+    for (const id of agents) {
+      const info = backgroundAgents[id];
+      if (!info) continue;
+      inputs[id] = {
+        title: agentTitles[id],
+        directoryName: info.directoryName,
+        tools: agentTools[id],
+        status: agentStatuses[id],
+        awaitingInput: agentAwaitingInput[id],
+        seenActivity: agentSeenActivity[id],
+        sleep: agentSleep[id],
+      };
+    }
+    return inputs;
+  }, [
+    agents,
+    backgroundAgents,
+    agentTitles,
+    agentTools,
+    agentStatuses,
+    agentAwaitingInput,
+    agentSeenActivity,
+    agentSleep,
+  ]);
 
   // Mobile shell (phones, touch tablets): office and terminal as sliding
   // full-screen pages with the cards in a bottom bar. Desktop keeps the
@@ -244,6 +282,15 @@ function App() {
   // The Settings surface renders one provider today; its checkbox binds to
   // the Claude row of the per-provider install-state map.
   const claudeHooksInstalled = hooksInstalled['claude'] === true;
+  // The "Instant Detection Active" toast. Never in a read-only office: it can't
+  // record the dismissal (the server refuses setHooksInfoShown), so it would
+  // come back on every load, and hooks aren't a viewer's business anyway.
+  const showHooksTooltip =
+    !officeReadOnly &&
+    hooksEnabled &&
+    claudeHooksInstalled &&
+    !hooksInfoShown &&
+    !hooksTooltipDismissed;
 
   // Mutate Directory→Area mappings locally + send to server. Updates OfficeState in
   // the same tick so a follow-up agentCreated picks up the new mapping.
@@ -607,17 +654,19 @@ function App() {
 
           <ToolOverlay
             officeState={officeState}
-            agents={agents}
+            agents={officeAgents}
             agentTools={agentTools}
             subagentTools={subagentTools}
             subagentCharacters={subagentCharacters}
             agentProgress={agentProgress}
             agentSleep={agentSleep}
+            agentTitles={agentTitles}
             containerRef={containerRef}
             zoom={editor.zoom}
             panRef={editor.panRef}
             onCloseAgent={handleCloseAgent}
             alwaysShowOverlay={alwaysShowOverlay}
+            compactLabels={isMobile}
           />
 
           {/* Done-today strip. Hidden while editing: the editor toolbar takes
@@ -628,6 +677,15 @@ function App() {
               compact={isMobile}
               aboveToolbar={!isMobile && !officeReadOnly}
             />
+          )}
+
+          {/* Background agents: a panel under the zoom controls (desktop,
+              hidden while editing, like the strip: the editor's panels need the
+              room), a "🤖 N" chip bottom-right on phones. */}
+          {isMobile ? (
+            <RemoteWorkersChip workers={remoteWorkers} />
+          ) : (
+            !editor.isEditMode && <RemoteWorkersPanel workers={remoteWorkers} />
           )}
         </>
       ) : (
@@ -646,7 +704,7 @@ function App() {
           message), NOT the hooksEnabled preference: hooksEnabled defaults true
           while first-run consent is still pending, and announcing "Instant
           Detection Active" before anything is installed would be a lie. */}
-      {hooksEnabled && claudeHooksInstalled && !hooksInfoShown && !hooksTooltipDismissed && (
+      {showHooksTooltip && (
         <Tooltip
           title="Instant Detection Active"
           position="top-right"
@@ -769,7 +827,7 @@ function App() {
           office={officeRegion}
           shell={mobileShell}
           drawer={terminalDrawer}
-          agentIds={agents}
+          agentIds={officeAgents}
           terminalAgentIds={terminalAgentIds}
           focusedAgentId={focusedAgentId}
           terminalAvailable={terminalAvailable}
@@ -810,7 +868,7 @@ function App() {
           ) : (
             !isDebugMode && (
               <AgentCardBar
-                agentIds={agents}
+                agentIds={officeAgents}
                 focusedAgentId={focusedAgentId}
                 getAppearance={terminalDrawer.getAppearance}
                 statusFor={terminalDrawer.statusFor}

@@ -7,6 +7,9 @@ import {
   BUBBLE_SITTING_OFFSET_PX,
   BUBBLE_VERTICAL_OFFSET_PX,
   CHARACTER_SITTING_OFFSET_PX,
+  COMPACT_LABEL_FONT_PX,
+  COMPACT_LABEL_LIFT_PX,
+  COMPACT_LABEL_MAX_WIDTH_PX,
   CONTEXT_CRITICAL_THRESHOLD,
   CONTEXT_DANGER_THRESHOLD,
   CONTEXT_GAUGE_BG,
@@ -17,12 +20,15 @@ import {
   CONTEXT_GAUGE_HEIGHT_PX,
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
+  LABEL_FOCUSED_MAX_WIDTH_PX,
   LABEL_MAX_SHIFT_PX,
   LABEL_ROW_BAND_PX,
   LABEL_STACK_GAP_PX,
+  LABEL_TITLE_MAX_CHARS,
   OVERLAY_BUBBLE_Z_INDEX,
   OVERLAY_LABEL_SELECTED_Z_INDEX,
   OVERLAY_LABEL_Z_INDEX,
+  SMOKE_BREAK_TAG,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
   TOOL_OVERLAY_VERTICAL_OFFSET,
@@ -43,6 +49,7 @@ import {
   sleepLabel,
   waitLevel,
 } from '../../progress/progressFormat.js';
+import { labelDensity, originLabel } from '../agentLabel.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type { LabelBox } from '../labelLayout.js';
 import { resolveLabelOverlaps } from '../labelLayout.js';
@@ -89,11 +96,16 @@ interface ToolOverlayProps {
   agentProgress: Record<number, AgentProgressState>;
   /** Sleeping agents (agentSleep): "💤 idle 3h" replaces their activity. */
   agentSleep: Record<number, AgentSleepState>;
+  /** Task titles: the origin line reads `<title> · <repo>`. */
+  agentTitles: Record<number, string>;
   containerRef: React.RefObject<HTMLDivElement | null>;
   zoom: number;
   panRef: React.RefObject<{ x: number; y: number }>;
   onCloseAgent: (id: number) => void;
   alwaysShowOverlay: boolean;
+  /** Phone layout: with always-show on, unfocused labels shrink to their
+   *  activity line (agentLabel.ts labelDensity). */
+  compactLabels: boolean;
 }
 
 /** Derive a short human-readable activity string from tools/status */
@@ -201,11 +213,13 @@ export function ToolOverlay({
   subagentCharacters,
   agentProgress,
   agentSleep,
+  agentTitles,
   containerRef,
   zoom,
   panRef,
   onCloseAgent,
   alwaysShowOverlay,
+  compactLabels,
 }: ToolOverlayProps) {
   const [, setTick] = useState(0);
   // Wall clock of the latest frame. This loop already re-renders the overlay
@@ -409,14 +423,26 @@ export function ToolOverlay({
       dotColor = 'var(--color-status-active)';
     }
 
+    // Phone + always-show: a label nobody is looking at is its activity line
+    // alone; the focused agent keeps every row.
+    const focused = isSelected || isHovered;
+    const compact =
+      labelDensity({ compactLabels, alwaysShow: alwaysShowOverlay, focused }) === 'compact';
+
     // Team info
     const teamRoleLabel = ch.isTeamLead ? 'LEAD' : ch.agentName || null;
-    // Origin: the Directory, prefixed with where a relayed remote session runs.
+    // Origin: `<title> · <repo>`, prefixed with where a relayed remote session
+    // runs. The title is cut short unless this label is focused; the full line
+    // is the row's tooltip either way.
     const source = isSub ? undefined : officeState.agentSources.get(id);
-    const originLabel = source
-      ? `${source.kind === 'cloud' ? '☁' : '💻'} ${source.label}${ch.directoryName ? ` · ${ch.directoryName}` : ''}`
-      : ch.directoryName;
-    const hasExtraLines = !!(originLabel || teamRoleLabel);
+    const origin = {
+      title: isSub ? undefined : agentTitles[id],
+      directoryName: ch.directoryName,
+      source,
+    };
+    const originText = originLabel(origin, focused ? Infinity : LABEL_TITLE_MAX_CHARS);
+    const originFull = originLabel(origin);
+    const hasExtraLines = !!(originText || teamRoleLabel);
     const helpers = isSub ? 0 : (helperCounts.get(id) ?? 0);
 
     // Context gauge. Every agent gets one — lead, teammate, adopted,
@@ -438,6 +464,13 @@ export function ToolOverlay({
       (helpers > 0 ? HELPERS_LINE_FONT_PX : 0);
 
     const dimmed = alwaysShowOverlay && !isSelected && !isHovered;
+    // A focused label may grow wide enough for the whole title (never wider
+    // than the screen, which a phone is narrower than).
+    const panelMaxWidth = compact
+      ? COMPACT_LABEL_MAX_WIDTH_PX
+      : focused
+        ? `min(${LABEL_FOCUSED_MAX_WIDTH_PX}px, calc(100vw - 16px))`
+        : undefined;
     const renderLabel = (top: number) => (
       <div
         className="absolute flex flex-col items-center -translate-x-1/2"
@@ -451,9 +484,13 @@ export function ToolOverlay({
         data-testid="agent-overlay"
         data-agent-id={id}
         data-label-box=""
+        data-label-density={compact ? 'compact' : 'full'}
         data-sleeping={asleep || undefined}
       >
-        <div className="flex items-center border-border px-8 pt-2 pb-4 gap-5 pixel-panel whitespace-nowrap max-w-2xs">
+        <div
+          className={`flex items-center border-border pixel-panel whitespace-nowrap ${compact ? 'px-4 pt-1 pb-2 gap-4' : 'px-8 pt-2 pb-4 gap-5'} ${panelMaxWidth === undefined ? 'max-w-2xs' : ''}`}
+          style={{ maxWidth: panelMaxWidth }}
+        >
           {dotColor && (
             <span
               className={`w-6 h-6 rounded-full shrink-0 ${isActive && !hasPermission && !hasWaiting ? 'pixel-pulse' : ''}`}
@@ -461,7 +498,7 @@ export function ToolOverlay({
             />
           )}
           <div className="flex flex-col gap-0 overflow-hidden">
-            {teamRoleLabel && (
+            {!compact && teamRoleLabel && (
               <span
                 className="overflow-hidden text-ellipsis block leading-none"
                 style={{
@@ -476,20 +513,31 @@ export function ToolOverlay({
             <span
               className="overflow-hidden text-ellipsis block leading-none"
               style={{
-                fontSize: isSub ? '20px' : '22px',
+                fontSize: compact ? COMPACT_LABEL_FONT_PX : isSub ? '20px' : '22px',
                 fontStyle: isSub ? 'italic' : undefined,
                 color: asleep ? 'var(--color-text-muted)' : undefined,
               }}
               data-testid={asleep ? 'sleep-label' : undefined}
             >
               {activityText}
+              {/* A mid-work smoke (living office): the activity stays, tagged. */}
+              {ch.smokeBreak && (
+                <span className="text-2xs text-text-muted" data-testid="smoke-break-tag">
+                  {' '}
+                  {SMOKE_BREAK_TAG}
+                </span>
+              )}
             </span>
-            {originLabel && (
-              <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
-                {originLabel}
+            {!compact && originText && (
+              <span
+                className="text-2xs leading-none overflow-hidden text-ellipsis block"
+                title={originFull}
+                data-testid="origin-label"
+              >
+                {originText}
               </span>
             )}
-            {helpers > 0 && (
+            {!compact && helpers > 0 && (
               <span
                 className="text-2xs leading-none overflow-hidden text-ellipsis block text-text-muted"
                 data-testid="helpers-line"
@@ -497,8 +545,8 @@ export function ToolOverlay({
                 👥 {countLabel(helpers, 'helper')}
               </span>
             )}
-            {trackProgress && <StageTrack progress={trackProgress} />}
-            {waitMs !== null && (
+            {!compact && trackProgress && <StageTrack progress={trackProgress} />}
+            {!compact && waitMs !== null && (
               <span
                 className="block leading-none"
                 style={{
@@ -528,7 +576,7 @@ export function ToolOverlay({
             </Button>
           )}
         </div>
-        {showContextGauge && (
+        {!compact && showContextGauge && (
           <div
             style={{
               width: CONTEXT_GAUGE_WIDTH_PX,
@@ -558,7 +606,9 @@ export function ToolOverlay({
       marker: null,
       label: {
         left: screenX,
-        top: screenY - (hasExtraLines ? 34 : 28) - extraRowsLiftPx,
+        top: compact
+          ? screenY - COMPACT_LABEL_LIFT_PX
+          : screenY - (hasExtraLines ? 34 : 28) - extraRowsLiftPx,
         render: renderLabel,
       },
     });

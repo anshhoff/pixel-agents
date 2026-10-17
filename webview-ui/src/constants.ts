@@ -215,6 +215,116 @@ export const PERMISSION_VOLUME = 0.12;
 // ── Furniture Animation ─────────────────────────────────────
 export const FURNITURE_ANIM_INTERVAL_SEC = 0.2;
 
+// ── Living office (zones, destinations, effects) ────────────
+// docs/office/DESIGN.md. Zones are layout Areas with reserved labels; a layout
+// without them skips the whole behaviour.
+/** A destination is kept at least this long before a character switches to
+ *  another, so fast tool bursts don't make it pace back and forth. Switching
+ *  TO its own desk (active) or to the Meeting room is immediate. */
+export const ZONE_HOLD_MIN_SEC = 8;
+/** A character whose zone was full looks for a free place again this often. */
+export const ZONE_RETRY_INTERVAL_SEC = 1;
+/** An agent that closes within this long of walking in skips the walk out
+ *  (and has its walk in cut short): it despawns where it stands. */
+export const TRANSIENT_SESSION_SEC = 20;
+/** Tool names that are a shell command (a live one in phase `test` → Server). */
+export const ZONE_SHELL_TOOL_NAMES: readonly string[] = ['Bash', 'PowerShell'];
+/** The tool that asks the user something (live → Meeting, like a permission). */
+export const ZONE_ASK_USER_TOOL_NAME = 'AskUserQuestion';
+/** Furniture the zones key on, by type prefix (SERVER_RACK_OFF / _ON_1 / ...). */
+export const ZONE_ASHTRAY_TYPE_PREFIX = 'ASHTRAY';
+export const ZONE_SERVER_RACK_TYPE_PREFIX = 'SERVER_RACK';
+/** Cigarette held by a character at a Smoke spot, in sprite px from its feet
+ *  anchor (bottom-center): the hand's height, where the cigarette starts when
+ *  it faces the viewer or away (just past the hand at its side) or sideways
+ *  (just in front of its body), and its length (paper, then one lit px). */
+export const CIGARETTE_HAND_RISE_PX = 9;
+export const CIGARETTE_REACH_FRONT_PX = 6;
+export const CIGARETTE_REACH_SIDE_PX = 4;
+export const CIGARETTE_LENGTH_PX = 3;
+/** Sorts the cigarette and its smoke just in front of the smoker. */
+export const CIGARETTE_Z_SORT_OFFSET = 0.01;
+export const CIGARETTE_PAPER_COLOR = '#f2f0ea';
+export const CIGARETTE_TIP_COLOR = '#ff8a2a';
+/** The tip while inhaling, and the dead tip it fades to when stubbed out. */
+export const CIGARETTE_TIP_GLOW_COLOR = '#ffd23f';
+export const CIGARETTE_ASH_COLOR = '#8c8c8c';
+/** A butt left in the ashtray: paper px, then the filter px. */
+export const CIGARETTE_FILTER_COLOR = '#d98a3d';
+/** The lighter's 2-frame flick: a spark, then a small flame. */
+export const LIGHTER_SPARK_COLOR = '#fff4b0';
+export const LIGHTER_FLAME_COLOR = '#ff9d2e';
+/** Mouth (the exhale), in sprite px from the feet anchor: its height, and how
+ *  far in front of the face it is when the character faces sideways. */
+export const SMOKE_MOUTH_RISE_PX = 19;
+export const SMOKE_MOUTH_SIDE_PX = 5;
+/** Facing away the mouth is hidden: the exhale shows this much higher, over the head. */
+export const SMOKE_MOUTH_BACK_EXTRA_RISE_PX = 7;
+/** A smoke break's timeline, in seconds after arriving at the Smoke spot:
+ *  the lighter flicks for the light-up, the first drag follows after a beat,
+ *  then one about every period (± half the jitter: ~4-6 s). A drag is an
+ *  inhale (the tip glows), a pause, and an exhale cloud from the mouth. */
+export const SMOKE_LIGHT_UP_SEC = 0.8;
+export const SMOKE_LIGHTER_FRAME_SEC = 0.12;
+export const SMOKE_FIRST_DRAG_DELAY_SEC = 1.5;
+export const SMOKE_DRAG_PERIOD_SEC = 5;
+export const SMOKE_DRAG_JITTER_SEC = 1;
+export const SMOKE_INHALE_SEC = 0.4;
+export const SMOKE_EXHALE_DELAY_SEC = 0.3;
+export const SMOKE_EXHALE_LIFETIME_SEC = 2;
+export const SMOKE_EXHALE_RISE_PX_PER_SEC = 5;
+/** Squares in an exhale cloud, the delay between them, and their spread. */
+export const SMOKE_EXHALE_PUFFS = 3;
+export const SMOKE_EXHALE_STAGGER_SEC = 0.12;
+export const SMOKE_EXHALE_SPREAD_PX = 1.5;
+/** The shared "wind": every cloud and wisp drifts this way (px/s, + = right). */
+export const SMOKE_WIND_PX_PER_SEC = 2.5;
+/** Between drags thin wisps rise off the tip: one this often, 1 px, faint. */
+export const SMOKE_WISP_INTERVAL_SEC = 0.8;
+export const SMOKE_WISP_LIFETIME_SEC = 1.6;
+export const SMOKE_WISP_RISE_PX_PER_SEC = 6;
+export const SMOKE_WISP_ALPHA = 0.35;
+/** Smoke squares grow to this size, starting from this alpha, wobbling. */
+export const SMOKE_PUFF_MAX_SIZE_PX = 3;
+export const SMOKE_PUFF_START_ALPHA = 0.55;
+export const SMOKE_PUFF_DRIFT_PX = 1;
+export const SMOKE_PUFF_WOBBLE_RAD_PER_SEC = 2.2;
+export const SMOKE_PUFF_COLOR = '#d8d8d8';
+/** Some drags are followed by an ash flick: a grey px falls off the tip
+ *  toward the ashtray. */
+export const SMOKE_ASH_FLICK_CHANCE = 0.35;
+export const SMOKE_ASH_FLICK_AFTER_SEC = 2.2;
+export const SMOKE_ASH_FALL_SEC = 0.5;
+export const SMOKE_ASH_FALL_PX = 6;
+export const SMOKE_ASH_DRIFT_PX = 2;
+/** Called away, a smoker stubs its cigarette out on the ashtray first: the
+ *  ember fades out over this long, then it goes. */
+export const SMOKE_STUB_OUT_SEC = 1;
+/** The ashtray fills with butts as the longest current wait on the user grows:
+ *  one per this many seconds, at these spots of the ashtray's bowl (sprite px
+ *  from its top-left; their count is the cap). Empty when nobody waits. */
+export const ASHTRAY_BUTT_WAIT_SEC = 5 * 60;
+export const ASHTRAY_BUTT_SLOTS: ReadonlyArray<{ x: number; y: number }> = [
+  { x: 5, y: 16 },
+  { x: 7, y: 14 },
+  { x: 8, y: 16 },
+  { x: 10, y: 15 },
+];
+/** Mid-work smoke breaks (the "waiting on the user" smoke is separate):
+ *  (A) a shell command that isn't a test/build, running longer than this... */
+export const SMOKE_LONG_COMMAND_SEC = 45;
+/** ...(B) or a break after this much continuous work, at most once per the
+ *  cooldown, taken with this chance at a gap of this long with no live tool,
+ *  lasting min + up to range seconds. */
+export const SMOKE_BREAK_AFTER_WORK_SEC = 40 * 60;
+export const SMOKE_BREAK_COOLDOWN_SEC = 60 * 60;
+export const SMOKE_BREAK_CHANCE = 0.25;
+export const SMOKE_BREAK_GAP_SEC = 3;
+export const SMOKE_BREAK_MIN_SEC = 60;
+export const SMOKE_BREAK_RANGE_SEC = 30;
+/** The label tag of a mid-work smoker (its activity text stays). */
+export const SMOKE_BREAK_TAG = '🚬 break';
+
 // ── Version Notice ──────────────────────────────────────────
 export const WHATS_NEW_AUTO_CLOSE_MS = 20000;
 export const WHATS_NEW_FADE_MS = 1000;
@@ -242,6 +352,33 @@ export const LABEL_MAX_SHIFT_PX = 96;
  *  one row and stack in agent-id order, so a pixel of difference between
  *  seated neighbours can't flip which one moves from frame to frame. */
 export const LABEL_ROW_BAND_PX = 6;
+/** A label's task title is cut to this many characters (` · repo` follows);
+ *  the hovered or selected label shows it whole, up to the wide max width. */
+export const LABEL_TITLE_MAX_CHARS = 26;
+export const LABEL_FOCUSED_MAX_WIDTH_PX = 440;
+/** Phone + Always Show Labels: the labels nobody is looking at shrink to their
+ *  activity line at this size and width (office/agentLabel.ts labelDensity)... */
+export const COMPACT_LABEL_FONT_PX = 14;
+export const COMPACT_LABEL_MAX_WIDTH_PX = 120;
+/** ...and sit this far above the character's head anchor (one short row). */
+export const COMPACT_LABEL_LIFT_PX = 20;
+
+// ── Remote Workers panel (background agents) ───────────────
+/** Desktop: the panel hangs under the zoom controls (top-8 + three 40px
+ *  buttons with 4px gaps = 136px), clear of the TODAY strip and toolbar. */
+export const REMOTE_WORKERS_TOP_PX = 148;
+export const REMOTE_WORKERS_WIDTH_PX = 230;
+/** Room kept free below the panel for the TODAY strip + toolbar, so a long
+ *  list scrolls instead of running into them. */
+export const REMOTE_WORKERS_BOTTOM_RESERVE_PX = 140;
+/** Phone: the chip sits bottom-right, this far up — just above the version
+ *  label (bottom-8, text-lg) and level with nothing else. */
+export const REMOTE_WORKERS_MOBILE_BOTTOM_PX = 44;
+/** Phone: the expanded list's width and the share of the office height it may take. */
+export const REMOTE_WORKERS_MOBILE_WIDTH_PX = 260;
+export const REMOTE_WORKERS_MOBILE_MAX_HEIGHT_RATIO = 0.5;
+/** How often the tiles re-read the clock (a sleeping worker's "idle 3h"). */
+export const REMOTE_WORKERS_CLOCK_MS = 60_000;
 
 // ── Greeter + Intro bubble ──────────────────────────────────
 /** Reserved character id for the Intro's greeter. Far outside both real agent
@@ -257,6 +394,9 @@ export const INTRO_BUBBLE_Z_INDEX = 45;
 export const OVERLAY_LABEL_Z_INDEX = 41;
 export const OVERLAY_LABEL_SELECTED_Z_INDEX = 42;
 export const OVERLAY_BUBBLE_Z_INDEX = 43;
+/** Phone: the Remote Workers chip while its list is open — above the labels
+ *  and bubbles the list covers, still below the Intro bubble. */
+export const REMOTE_WORKERS_OPEN_Z_INDEX = 44;
 /** The greeter stands this many tiles in from the office's bottom-left corner
  *  (target tile (margin, rows-1-margin); nearest walkable tile if blocked). */
 export const GREETER_TILE_MARGIN = 3;

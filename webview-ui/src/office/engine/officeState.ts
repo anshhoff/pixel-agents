@@ -1,10 +1,12 @@
 import { pickDiversePalette } from '../../../../core/src/paletteUtils.js';
 import {
+  ASHTRAY_BUTT_SLOTS,
   AUTO_ON_FACING_DEPTH,
   AUTO_ON_SIDE_DEPTH,
   CHARACTER_HIT_HALF_WIDTH,
   CHARACTER_HIT_HEIGHT,
   CHARACTER_SITTING_OFFSET_PX,
+  CIGARETTE_Z_SORT_OFFSET,
   DISMISS_BUBBLE_FAST_FADE_SEC,
   FURNITURE_ANIM_INTERVAL_SEC,
   GREETER_ID,
@@ -14,7 +16,11 @@ import {
   MAX_PET_ID_LENGTH,
   PET_HIT_HALF_WIDTH,
   PET_HIT_HEIGHT,
+  SMOKE_LIGHT_UP_SEC,
+  SMOKE_STUB_OUT_SEC,
+  TRANSIENT_SESSION_SEC,
   WAITING_BUBBLE_DURATION_SEC,
+  ZONE_RETRY_INTERVAL_SEC,
 } from '../../constants.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
@@ -36,12 +42,53 @@ import type {
   PlacedPet,
   Seat,
   TileType as TileTypeVal,
+  ZoneTarget,
 } from '../types.js';
 import { CharacterState, Direction, PetState, TILE_SIZE } from '../types.js';
-import { createCharacter, updateCharacter } from './characters.js';
+import type { OfficeZones } from '../zones.js';
+import { isRoutedZoneLabel, NO_ZONES, parseZones, toZoneLabel, ZoneLabel } from '../zones.js';
+import { createCharacter, isSettledAtZoneTarget, updateCharacter } from './characters.js';
 import { advanceMatrixEffect, startMatrixEffect } from './matrixEffectState.js';
 import { createPet, updatePet } from './petEntity.js';
 import { anchorTile, closestFreeSeat, helperSeat } from './seatPlacement.js';
+import type { SmokeBreakState } from './smokeBreaks.js';
+import { NO_SMOKE_BREAK, onSmokeBreak, stepSmokeBreak } from './smokeBreaks.js';
+import { ASHTRAY_BUTT_SPRITE, ashtrayButtCount, isSmoking, socialFacing } from './zoneEffects.js';
+import type {
+  DestinationIntent,
+  DestinationSignals,
+  LiveTool,
+  PlaceChoice,
+} from './zoneRouting.js';
+import {
+  choosePlace,
+  Destination,
+  holdDestination,
+  isSmokeDestination,
+  liveToolSignals,
+  pickDestination,
+} from './zoneRouting.js';
+
+/** A destination being acted on: placed yet, and when to look again if its room was full. */
+interface RoutedIntent extends DestinationIntent {
+  resolved: boolean;
+  retryAt: number;
+}
+
+/** Per-agent activity the destination rules read, kept by id like sleepingAgents. */
+interface AgentZoneSignals {
+  /** Live (not done) tools by toolId. */
+  tools: Map<string, LiveTool>;
+  permission: boolean;
+  phase?: string;
+  /** agentProgress.waitingSince: when its current wait on the user began (epoch ms). */
+  waitingSince?: number;
+  /** The mid-work break scheduler (smokeBreaks.ts). */
+  smokeBreak: SmokeBreakState;
+}
+
+/** Where the Entrance door's leaving target is keyed (shared, never reserved). */
+const DOOR_TARGET_KEY = 'door';
 
 /** Internal helper: facing-tile coords for a seat. Returns null for invalid direction. */
 function seatFacingOffset(direction: Direction): { dCol: number; dRow: number } {
@@ -95,6 +142,22 @@ export class OfficeState {
   sleepingAgents: Set<number> = new Set();
   private nextSubagentId = -1;
 
+  // ── Living office (docs/office/DESIGN.md) ───────────────────
+  /** The layout's zones; empty in a layout without the reserved Area labels,
+   *  which skips every living-office behaviour. */
+  zones: OfficeZones = NO_ZONES;
+  /** Seconds of game time (sum of update dt): the destination engine's clock. */
+  private officeClock = 0;
+  private readonly destinationIntents = new Map<number, RoutedIntent>();
+  /** Standing spots in use: spot key → character id. Zone SEATS are reserved
+   *  through `seat.assigned` instead, so no desk picker can hand them out. */
+  private readonly reservedSpots = new Map<string, number>();
+  private readonly agentZoneSignals = new Map<number, AgentZoneSignals>();
+  /** Wall clock (epoch ms) for wait lengths (agentProgress.waitingSince). Tests replace it. */
+  nowMs: () => number = () => Date.now();
+  /** The mid-work break chance's RNG ([0, 1), like Math.random). Tests seed it. */
+  zoneRandom: () => number = () => Math.random();
+
   /**
    * directoryName → list of Area labels that Directory belongs to.
    * Populated by useExtensionMessages on `areaMappingsLoaded`. Consulted by
@@ -135,6 +198,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    this.zones = this.buildZones();
     // Pets are built last because they need walkableTiles populated for spawn.
     this.rebuildPetsFromLayout(this.layout);
   }
@@ -142,12 +206,14 @@ export class OfficeState {
   /** Rebuild all derived state from a new layout. Reassigns existing characters.
    *  @param shift Optional pixel shift to apply when grid expands left/up */
   rebuildFromLayout(layout: OfficeLayout, shift?: { col: number; row: number }): void {
+    this.resetZoneRouting();
     this.layout = layout;
     this.tileMap = layoutToTileMap(layout);
     this.seats = layoutToSeats(layout.furniture);
     this.blockedTiles = getBlockedTiles(layout.furniture);
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    this.zones = this.buildZones();
 
     // Shift character positions when grid expands left/up
     if (shift && (shift.col !== 0 || shift.row !== 0)) {
@@ -205,7 +271,7 @@ export class OfficeState {
       (a, b) => Number(a.isSubagent) - Number(b.isSubagent),
     );
     for (const ch of unseated) {
-      if (ch.seatId) continue;
+      if (ch.seatId || ch.leaving) continue;
       const seatId = this.findFreeSeat(ch.directoryName);
       if (seatId) {
         this.seats.get(seatId)!.assigned = true;
@@ -410,8 +476,33 @@ export class OfficeState {
     const pick2 = this.pickFromSeats(unzoned, electronicsTiles);
     if (pick2) return pick2;
 
+    // Living office — desks before the rooms: seats outside every routed zone
+    // (the Dev room), then the Cafe/Lounge overflow (DESIGN.md, Crowding). A
+    // layout without zones goes straight on to stage 3, as it always has.
+    if (this.zones.zones.size > 0) {
+      const desks = freeSeats.filter(this.isDeskSeat);
+      const deskPick = this.pickFromSeats(desks, electronicsTiles);
+      if (deskPick) return deskPick;
+      const overflow = freeSeats.filter((uid) => {
+        const zone = toZoneLabel(this.seatZone(uid));
+        return zone === ZoneLabel.CAFE || zone === ZoneLabel.LOUNGE;
+      });
+      const overflowPick = this.pickFromSeats(overflow, electronicsTiles);
+      if (overflowPick) return overflowPick;
+    }
+
     // Stage 3 — any free seat.
     return this.pickFromSeats(freeSeats, electronicsTiles);
+  }
+
+  /** Living office: is this seat a desk rather than a room's seat (sofa,
+   *  meeting chair, café bench)? Every seat is, in a layout without zones. */
+  private readonly isDeskSeat = (uid: string): boolean => !isRoutedZoneLabel(this.seatZone(uid));
+
+  /** The desks-first preference for the nearest-seat pickers (helpers,
+   *  teammates); undefined — no preference, as before — without zones. */
+  private deskPreference(): ((uid: string) => boolean) | undefined {
+    return this.zones.zones.size > 0 ? this.isDeskSeat : undefined;
   }
 
   /** Closest walkable tile to (col,row) not occupied by another character, or null. */
@@ -458,7 +549,12 @@ export class OfficeState {
     directoryName?: string,
     nearAgentId?: number,
   ): void {
-    if (this.characters.has(id)) return;
+    const existing = this.characters.get(id);
+    if (existing) {
+      // An agent back before its old character finished walking out takes over.
+      if (!existing.leaving) return;
+      this.characters.delete(id);
+    }
 
     let palette: number;
     let hueShift: number;
@@ -488,7 +584,7 @@ export class OfficeState {
       }
     }
     if (!seatId && anchorAt) {
-      seatId = closestFreeSeat(this.seats, anchorAt.col, anchorAt.row);
+      seatId = closestFreeSeat(this.seats, anchorAt.col, anchorAt.row, this.deskPreference());
     }
     if (!seatId) {
       seatId = this.findFreeSeat(directoryName);
@@ -551,7 +647,7 @@ export class OfficeState {
     const parent =
       helper.parentAgentId !== null ? this.characters.get(helper.parentAgentId) : undefined;
     // Still marked assigned while choosing, so the helper can't pick it again.
-    const next = helperSeat(parent, this.seats);
+    const next = helperSeat(parent, this.seats, this.deskPreference());
     let target: { col: number; row: number } | null;
     if (next) {
       const seat = this.seats.get(next)!;
@@ -668,19 +764,98 @@ export class OfficeState {
   }
 
   removeAgent(id: number): void {
+    this.agentZoneSignals.delete(id);
+    this.destinationIntents.delete(id);
     const ch = this.characters.get(id);
     if (!ch) return;
-    if (ch.matrixEffect === 'despawn') return; // already despawning
+    if (ch.matrixEffect === 'despawn' || ch.leaving) return; // already despawning / leaving
     // Free seat and clear selection immediately
     if (ch.seatId) {
       const seat = this.seats.get(ch.seatId);
       if (seat) seat.assigned = false;
     }
+    this.releaseZoneTarget(ch);
     if (this.selectedAgentId === id) this.selectedAgentId = null;
     if (this.cameraFollowId === id) this.cameraFollowId = null;
+    ch.bubbleType = null;
+    // Living office: walk out through the Entrance door, despawning there.
+    if (this.walkOut(ch)) return;
     // Start despawn animation instead of immediate delete
     startMatrixEffect(ch, 'despawn');
-    ch.bubbleType = null;
+  }
+
+  // ── Living office: entrance ───────────────────────────────────
+
+  /**
+   * A NEW agent (a live agentCreated, not a restore) comes in through the
+   * Entrance door: it materializes there and walks to its desk. Without a
+   * door, a seat, or a way from one to the other, it stays where addAgent put
+   * it — at its desk, as before. Either way the arrival time is kept, so a
+   * session that closes again within TRANSIENT_SESSION_SEC skips the walk out.
+   */
+  enterThroughDoor(id: number): void {
+    const ch = this.characters.get(id);
+    const door = this.zones.door;
+    if (!ch || !door || ch.isSubagent || ch.leaving) return;
+    ch.enteredAt = this.officeClock;
+    const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
+    if (!seat) return;
+    const path = this.withOwnSeatUnblocked(ch, () =>
+      findPath(door.col, door.row, seat.seatCol, seat.seatRow, this.tileMap, this.blockedTiles),
+    );
+    if (path.length === 0) return;
+    ch.tileCol = door.col;
+    ch.tileRow = door.row;
+    ch.x = door.col * TILE_SIZE + TILE_SIZE / 2;
+    ch.y = door.row * TILE_SIZE + TILE_SIZE / 2;
+    ch.dir = door.inward;
+    // The spawn effect plays at the door first (the FSM waits for it).
+    ch.path = path;
+    ch.moveProgress = 0;
+    ch.state = CharacterState.WALK;
+    ch.frame = 0;
+    ch.frameTimer = 0;
+  }
+
+  /**
+   * Send a removed agent out through the Entrance door; it despawns on
+   * arrival (update()). False — despawn on the spot, as before — without a
+   * door or a way to it, mid spawn effect, or for a transient session.
+   */
+  private walkOut(ch: Character): boolean {
+    const door = this.zones.door;
+    if (!door || ch.isSubagent || ch.matrixEffect) return false;
+    if (ch.enteredAt !== undefined && this.officeClock - ch.enteredAt < TRANSIENT_SESSION_SEC) {
+      return false;
+    }
+    const atDoor = ch.tileCol === door.col && ch.tileRow === door.row;
+    const path = findPath(
+      ch.tileCol,
+      ch.tileRow,
+      door.col,
+      door.row,
+      this.tileMap,
+      this.blockedTiles,
+    );
+    if (path.length === 0 && !atDoor) return false;
+    ch.seatId = null; // freed by removeAgent
+    ch.leaving = true;
+    ch.isActive = false;
+    ch.zoneTarget = {
+      zone: ZoneLabel.ENTRANCE,
+      key: DOOR_TARGET_KEY,
+      col: door.col,
+      row: door.row,
+      facing: door.outward,
+      sit: false,
+      shared: true,
+    };
+    ch.path = path;
+    ch.moveProgress = 0;
+    ch.state = path.length > 0 ? CharacterState.WALK : CharacterState.IDLE;
+    ch.frame = 0;
+    ch.frameTimer = 0;
+    return true;
   }
 
   /** Find seat uid at a given tile position, or null */
@@ -741,7 +916,7 @@ export class OfficeState {
     if (!teammate || !lead) return;
     const anchorAt = anchorTile(lead, this.seats);
     if (!anchorAt) return;
-    const target = closestFreeSeat(this.seats, anchorAt.col, anchorAt.row);
+    const target = closestFreeSeat(this.seats, anchorAt.col, anchorAt.row, this.deskPreference());
     if (!target || target === teammate.seatId) return;
     const targetSeat = this.seats.get(target)!;
     const targetDist =
@@ -840,7 +1015,7 @@ export class OfficeState {
     ch.isSubagent = true;
     ch.parentAgentId = parentAgentId;
 
-    const seatId = helperSeat(parentCh, this.seats);
+    const seatId = helperSeat(parentCh, this.seats, this.deskPreference());
     if (seatId) {
       const seat = this.seats.get(seatId)!;
       seat.assigned = true;
@@ -985,8 +1160,22 @@ export class OfficeState {
       }
     }
 
+    // Living office: the Server room's racks blink while someone works there.
+    if (this.zones.rackTiles.length > 0) {
+      for (const ch of this.characters.values()) {
+        if (ch.zoneTarget?.zone === ZoneLabel.SERVER && isSettledAtZoneTarget(ch)) {
+          for (const key of this.zones.rackTiles) autoOnTiles.add(key);
+          break;
+        }
+      }
+    }
+
+    // ...and its ashtray fills with butts while people wait on the user.
+    const butts = this.ashtrayButtInstances();
+
     if (autoOnTiles.size === 0) {
-      this.furniture = layoutToFurnitureInstances(this.layout.furniture);
+      const plain = layoutToFurnitureInstances(this.layout.furniture);
+      this.furniture = butts.length > 0 ? [...plain, ...butts] : plain;
       return;
     }
 
@@ -1016,7 +1205,8 @@ export class OfficeState {
       return item;
     });
 
-    this.furniture = layoutToFurnitureInstances(modifiedFurniture);
+    const instances = layoutToFurnitureInstances(modifiedFurniture);
+    this.furniture = butts.length > 0 ? [...instances, ...butts] : instances;
   }
 
   setAgentTool(id: number, tool: string | null): void {
@@ -1031,10 +1221,15 @@ export class OfficeState {
     if (ch) {
       ch.bubbleType = 'permission';
       ch.bubbleTimer = 0;
+      // The Meeting-room signal, kept apart from the bubble: clicking the
+      // bubble away doesn't answer the request.
+      if (!ch.isSubagent) this.zoneSignalsFor(id).permission = true;
     }
   }
 
   clearPermissionBubble(id: number): void {
+    const signals = this.agentZoneSignals.get(id);
+    if (signals) signals.permission = false;
     const ch = this.characters.get(id);
     if (ch && ch.bubbleType === 'permission') {
       ch.bubbleType = null;
@@ -1240,7 +1435,433 @@ export class OfficeState {
     const ch = this.characters.get(id);
     if (!ch || (ch.isSleeping ?? false) === sleeping) return;
     ch.isSleeping = sleeping;
-    if (sleeping && !ch.isActive && ch.state !== CharacterState.TYPE) this.sendToSeat(id);
+    // (A character the living office has sent somewhere is routed from there.)
+    if (sleeping && !ch.isActive && ch.state !== CharacterState.TYPE && !ch.zoneTarget) {
+      this.sendToSeat(id);
+    }
+  }
+
+  // ── Living office: the destination engine's signals ────────────
+  // What the rules read beyond the character's own flags (isActive,
+  // isSleeping): live tools, a pending permission, the stage-track phase.
+  // Kept by agent id, like sleepingAgents — messages can precede the character.
+
+  private zoneSignalsFor(id: number): AgentZoneSignals {
+    let signals = this.agentZoneSignals.get(id);
+    if (!signals) {
+      signals = { tools: new Map(), permission: false, smokeBreak: NO_SMOKE_BREAK };
+      this.agentZoneSignals.set(id, signals);
+    }
+    return signals;
+  }
+
+  /** agentToolStart: a tool is live (permissionActive: it already waits on a permission). */
+  noteToolStart(
+    id: number,
+    toolId: string,
+    toolName: string | null,
+    permissionActive: boolean,
+  ): void {
+    const signals = this.zoneSignalsFor(id);
+    if (!signals.tools.has(toolId)) {
+      signals.tools.set(toolId, { name: toolName, startedAt: this.officeClock });
+    }
+    if (permissionActive) signals.permission = true;
+  }
+
+  /** agentToolDone: the tool is no longer live. */
+  noteToolDone(id: number, toolId: string): void {
+    this.agentZoneSignals.get(id)?.tools.delete(toolId);
+  }
+
+  /** agentToolsClear: no tool is live any more. */
+  clearAgentTools(id: number): void {
+    this.agentZoneSignals.get(id)?.tools.clear();
+  }
+
+  /** agentProgress: the stage track's current phase (explore/build/test/ship),
+   *  and when its current wait on the user began (epoch ms; undefined if not waiting). */
+  setAgentProgress(id: number, phase: string | undefined, waitingSince?: number): void {
+    const signals = this.zoneSignalsFor(id);
+    signals.phase = phase;
+    signals.waitingSince = waitingSince;
+  }
+
+  // ── Living office: the destination engine ──────────────────────
+  // Per frame, for each top-level character: the rules pick a destination
+  // (zoneRouting.pickDestination), hysteresis decides whether to switch to it
+  // yet (holdDestination), and crowding picks the free place (choosePlace).
+  // The character then walks there under the FSM's zone branch. Desk and idle
+  // destinations hand it back to the desk FSM — today's behaviour.
+
+  private buildZones(): OfficeZones {
+    return parseZones({
+      cols: this.layout.cols,
+      rows: this.layout.rows,
+      areaTiles: this.layout.areaTiles,
+      furniture: this.layout.furniture,
+      tileMap: this.tileMap,
+      blockedTiles: this.blockedTiles,
+      seats: this.seats,
+      footprint: (type) => {
+        const entry = getCatalogEntry(type);
+        return entry
+          ? { w: entry.footprintW, h: entry.footprintH, bgRows: entry.backgroundTiles ?? 0 }
+          : undefined;
+      },
+    });
+  }
+
+  /** Before a layout rebuild: forget every route. Seats are rebuilt and
+   *  reassigned wholesale, so nothing is released; characters on their way
+   *  out finish leaving on the spot (their way out may be gone). */
+  private resetZoneRouting(): void {
+    this.destinationIntents.clear();
+    this.reservedSpots.clear();
+    for (const ch of this.characters.values()) {
+      if (!ch.zoneTarget) continue;
+      ch.zoneTarget = null;
+      ch.path = [];
+      ch.moveProgress = 0;
+      if (ch.leaving) {
+        if (!ch.matrixEffect) startMatrixEffect(ch, 'despawn');
+        continue;
+      }
+      ch.state = CharacterState.IDLE;
+      ch.frame = 0;
+      ch.frameTimer = 0;
+    }
+  }
+
+  /** The rules' inputs for a character, stepping its mid-work break scheduler (once a frame). */
+  private destinationSignals(ch: Character): DestinationSignals {
+    const signals = this.zoneSignalsFor(ch.id);
+    const now = this.officeClock;
+    const tools = liveToolSignals(signals.tools.values(), signals.phase, now);
+    // Asleep only counts while not working — the desk FSM's reading too.
+    const sleeping = (ch.isSleeping ?? false) && !ch.isActive;
+    signals.smokeBreak = stepSmokeBreak(
+      signals.smokeBreak,
+      {
+        now,
+        active: ch.isActive,
+        liveTools: signals.tools.size,
+        blocked: signals.permission || tools.askingUser || sleeping,
+        smokeFree: this.hasFreeSmokeSpot(ch),
+      },
+      this.zoneRandom,
+    );
+    return {
+      sleeping,
+      permission: signals.permission,
+      ...tools,
+      onBreak: onSmokeBreak(signals.smokeBreak, now),
+      active: ch.isActive,
+      waiting: !ch.isActive,
+    };
+  }
+
+  /** Is a Smoke spot free for this character (its own counts)? */
+  private hasFreeSmokeSpot(ch: Character): boolean {
+    const smoke = this.zones.zones.get(ZoneLabel.SMOKE);
+    return smoke !== undefined && smoke.places.some((p) => !this.isPlaceTaken(p, ch));
+  }
+
+  private routeCharacter(ch: Character): void {
+    const signals = this.destinationSignals(ch);
+    const intent = this.holdIntent(ch, pickDestination(signals));
+    this.actOnIntent(ch, intent);
+    // Mid-work smokers get a tag on their label; a smoke while waiting doesn't.
+    ch.smokeBreak =
+      intent.kind === Destination.BREAK && ch.isActive && ch.zoneTarget?.zone === ZoneLabel.SMOKE
+        ? signals.longCommand
+          ? 'command'
+          : 'break'
+        : undefined;
+  }
+
+  /** Hysteresis: the destination to act on now, given the one the rules want. */
+  private holdIntent(ch: Character, wanted: Destination): RoutedIntent {
+    const now = this.officeClock;
+    const current = this.destinationIntents.get(ch.id);
+    const next = holdDestination(current, wanted, now);
+    if (current && next === current) return current;
+    const intent: RoutedIntent = { ...next, resolved: false, retryAt: now };
+    this.destinationIntents.set(ch.id, intent);
+    return intent;
+  }
+
+  private actOnIntent(ch: Character, intent: RoutedIntent): void {
+    const now = this.officeClock;
+    if (now < intent.retryAt) return;
+    if (isSmokeDestination(intent.kind)) {
+      // Back for another before leaving the spot: light a fresh one.
+      if (ch.smokeStubAt !== undefined) {
+        ch.smokeStubAt = undefined;
+        ch.zoneFxTimer = 0;
+      }
+    } else if (this.stubbingOut(ch)) {
+      return; // called away: it puts the cigarette out first
+    }
+    if (intent.kind === Destination.DESK) {
+      // Its own desk: the desk FSM while it works. Between turns — the switch
+      // away still held back — it waits there, seated, rather than wandering.
+      this.setZoneTarget(ch, ch.isActive || ch.isSleeping ? null : this.ownDeskTarget(ch));
+      intent.resolved = true;
+      return;
+    }
+    if (intent.resolved) return;
+    this.resolveIntent(ch, intent);
+  }
+
+  /**
+   * A smoker called away (work resumed, a meeting, ...) stubs its cigarette
+   * out first: it turns to the ashtray beside its spot — every Smoke spot is
+   * next to one — and the ember fades for SMOKE_STUB_OUT_SEC. True while that
+   * is under way. Not lit yet (still at the lighter): it just goes.
+   */
+  private stubbingOut(ch: Character): boolean {
+    if (!isSmoking(ch)) return false;
+    const t = ch.zoneFxTimer ?? 0;
+    if (ch.smokeStubAt === undefined) {
+      if (t < SMOKE_LIGHT_UP_SEC) return false;
+      ch.smokeStubAt = t;
+    }
+    return t - ch.smokeStubAt < SMOKE_STUB_OUT_SEC;
+  }
+
+  private resolveIntent(ch: Character, intent: RoutedIntent): void {
+    const choice = this.choosePlaceFor(ch, intent.kind);
+    if (choice.kind === 'absent') {
+      // Desk, idle, or a room this layout doesn't have: the desk FSM.
+      this.setZoneTarget(ch, null);
+      intent.resolved = true;
+      return;
+    }
+    if (choice.kind === 'full') {
+      // Every place taken: stay at the desk. Working and sleeping agents do
+      // under the desk FSM; a waiting one sits there, still, rather than
+      // wandering off. Look again in a moment — a place may free up.
+      this.setZoneTarget(ch, ch.isActive || ch.isSleeping ? null : this.ownDeskTarget(ch));
+      intent.retryAt = this.officeClock + ZONE_RETRY_INTERVAL_SEC;
+      return;
+    }
+    this.setZoneTarget(ch, { ...choice.place }, choice.path);
+    intent.resolved = true;
+  }
+
+  /** choosePlace, skipping places this character can't walk to. */
+  private choosePlaceFor(
+    ch: Character,
+    kind: Destination,
+  ):
+    | Exclude<PlaceChoice, { kind: 'place' }>
+    | { kind: 'place'; place: ZoneTarget; path: Array<{ col: number; row: number }> } {
+    const unreachable = new Set<string>();
+    for (;;) {
+      const choice = choosePlace(
+        this.zones,
+        kind,
+        { col: ch.tileCol, row: ch.tileRow },
+        (place) => unreachable.has(place.key) || this.isPlaceTaken(place, ch),
+      );
+      if (choice.kind !== 'place') return choice;
+      const { place } = choice;
+      const path = this.pathForTarget(ch, place);
+      if (path.length > 0 || (ch.tileCol === place.col && ch.tileRow === place.row)) {
+        return { kind: 'place', place, path };
+      }
+      unreachable.add(place.key);
+    }
+  }
+
+  /** In use by someone else: a seat held as a desk or a destination, a reserved spot. */
+  private isPlaceTaken(place: ZoneTarget, ch: Character): boolean {
+    if (ch.zoneTarget?.key === place.key) return false; // its own
+    if (place.sit) return this.seats.get(place.key)?.assigned ?? true;
+    const holder = this.reservedSpots.get(place.key);
+    return holder !== undefined && holder !== ch.id;
+  }
+
+  /** "Wait at your own desk" (every zone place taken), or null without a seat. */
+  private ownDeskTarget(ch: Character): ZoneTarget | null {
+    const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
+    if (!seat) return null;
+    return {
+      zone: null,
+      key: seat.uid,
+      col: seat.seatCol,
+      row: seat.seatRow,
+      facing: seat.facingDir,
+      sit: true,
+      shared: true,
+    };
+  }
+
+  /**
+   * Point a character at a zone target (reserving it) or back at the desk FSM
+   * (null), releasing whatever it held. A no-op when nothing changes, so a
+   * character the living office never sends anywhere is never touched.
+   */
+  private setZoneTarget(
+    ch: Character,
+    target: ZoneTarget | null,
+    path?: Array<{ col: number; row: number }>,
+  ): void {
+    const current = ch.zoneTarget ?? null;
+    if (current === null && target === null) return;
+    if (current && target && current.key === target.key && current.zone === target.zone) return;
+    this.releaseZoneTarget(ch);
+    if (!target) {
+      // Back to the desk FSM, standing where it is: it walks to its seat when
+      // working (or asleep), or idles about as it always has.
+      ch.path = [];
+      ch.moveProgress = 0;
+      ch.state = CharacterState.IDLE;
+      ch.frame = 0;
+      ch.frameTimer = 0;
+      return;
+    }
+    if (!target.shared) {
+      if (target.sit) {
+        const seat = this.seats.get(target.key);
+        if (seat) seat.assigned = true;
+      } else {
+        this.reservedSpots.set(target.key, ch.id);
+      }
+    }
+    ch.zoneTarget = target;
+    ch.zoneFxTimer = 0;
+    ch.path = path ?? this.pathForTarget(ch, target);
+    ch.moveProgress = 0;
+    ch.state = ch.path.length > 0 ? CharacterState.WALK : CharacterState.IDLE;
+    ch.frame = 0;
+    ch.frameTimer = 0;
+  }
+
+  /** Drop the character's zone target, freeing its reservation. */
+  /** Two or more at the Smoke spots: each turns to the nearest other one
+   *  (zoneEffects.socialFacing). One stubbing out keeps facing the ashtray. */
+  private faceFellowSmokers(): void {
+    const smokers: Array<{ id: number; col: number; row: number }> = [];
+    for (const ch of this.characters.values()) {
+      if (isSmoking(ch) && ch.smokeStubAt === undefined) {
+        smokers.push({ id: ch.id, col: ch.tileCol, row: ch.tileRow });
+      }
+    }
+    if (smokers.length < 2) return;
+    for (const [id, dir] of socialFacing(smokers)) {
+      const ch = this.characters.get(id);
+      if (ch) ch.dir = dir;
+    }
+  }
+
+  /**
+   * The ashtray fills with butts while people wait on the user: one per
+   * ASHTRAY_BUTT_WAIT_SEC of the longest current wait among the smokers
+   * waiting (agentProgress.waitingSince; without it, their time at the spot).
+   * Mid-work smokers don't count. Drawn as tiny furniture on the bowl.
+   */
+  private ashtrayButtInstances(): FurnitureInstance[] {
+    if (this.zones.ashtrays.length === 0) return [];
+    let longest: number | null = null;
+    for (const ch of this.characters.values()) {
+      if (ch.zoneTarget?.zone !== ZoneLabel.SMOKE || ch.isActive || ch.leaving) continue;
+      const since = this.agentZoneSignals.get(ch.id)?.waitingSince;
+      const wait = since !== undefined ? (this.nowMs() - since) / 1000 : (ch.zoneFxTimer ?? 0);
+      if (longest === null || wait > longest) longest = wait;
+    }
+    const count = ashtrayButtCount(longest);
+    if (count === 0) return [];
+    const butts: FurnitureInstance[] = [];
+    for (const tray of this.zones.ashtrays) {
+      const height = getCatalogEntry(tray.type)?.sprite.length ?? TILE_SIZE;
+      const zY = tray.row * TILE_SIZE + height + CIGARETTE_Z_SORT_OFFSET; // just over the tray
+      for (const slot of ASHTRAY_BUTT_SLOTS.slice(0, count)) {
+        butts.push({
+          sprite: ASHTRAY_BUTT_SPRITE,
+          x: tray.col * TILE_SIZE + slot.x,
+          y: tray.row * TILE_SIZE + slot.y,
+          zY,
+        });
+      }
+    }
+    return butts;
+  }
+
+  private releaseZoneTarget(ch: Character): void {
+    const target = ch.zoneTarget;
+    ch.zoneTarget = null;
+    ch.smokeStubAt = undefined;
+    ch.smokeBreak = undefined;
+    if (!target || target.shared) return;
+    if (target.sit) {
+      const seat = this.seats.get(target.key);
+      if (seat) seat.assigned = false;
+    } else if (this.reservedSpots.get(target.key) === ch.id) {
+      this.reservedSpots.delete(target.key);
+    }
+  }
+
+  /** After a zone step: settle effects, the door on the way out, a lost path. */
+  private afterZoneStep(ch: Character, dt: number): void {
+    const target = ch.zoneTarget;
+    if (!target) return;
+    if (target.unreachable) {
+      if (ch.leaving) {
+        ch.zoneTarget = null;
+        startMatrixEffect(ch, 'despawn'); // can't reach the door: leave from here
+        return;
+      }
+      this.setZoneTarget(ch, null);
+      const intent = this.destinationIntents.get(ch.id);
+      if (intent) {
+        intent.resolved = false;
+        intent.retryAt = this.officeClock + ZONE_RETRY_INTERVAL_SEC;
+      }
+      return;
+    }
+    if (!isSettledAtZoneTarget(ch)) return;
+    if (ch.leaving) {
+      startMatrixEffect(ch, 'despawn'); // out of the door
+      return;
+    }
+    ch.zoneFxTimer = (ch.zoneFxTimer ?? 0) + dt;
+  }
+
+  /** Path from where the character stands to a target, its own seat and the
+   *  target seat counted walkable (chairs are blocked to everyone else). */
+  private pathForTarget(
+    ch: Character,
+    target: { col: number; row: number; sit: boolean },
+  ): Array<{ col: number; row: number }> {
+    return this.withTilesUnblocked(
+      [this.ownSeatKey(ch), target.sit ? `${target.col},${target.row}` : null],
+      () =>
+        findPath(ch.tileCol, ch.tileRow, target.col, target.row, this.tileMap, this.blockedTiles),
+    );
+  }
+
+  /** withOwnSeatUnblocked, plus the zone seat the character is headed for. */
+  private withRouteUnblocked<T>(ch: Character, fn: () => T): T {
+    const target = ch.zoneTarget;
+    return this.withTilesUnblocked(
+      [this.ownSeatKey(ch), target?.sit ? `${target.col},${target.row}` : null],
+      fn,
+    );
+  }
+
+  /** Run fn with these tiles out of blockedTiles; only the ones that were in it go back. */
+  private withTilesUnblocked<T>(keys: Array<string | null>, fn: () => T): T {
+    const removed: string[] = [];
+    for (const key of keys) {
+      if (key && this.blockedTiles.delete(key)) removed.push(key);
+    }
+    try {
+      return fn();
+    } finally {
+      for (const key of removed) this.blockedTiles.add(key);
+    }
   }
 
   setAgentContext(id: number, contextTokens: number, maxContextTokens: number): void {
@@ -1258,6 +1879,7 @@ export class OfficeState {
     if (newFrame !== prevFrame) {
       this.rebuildFurnitureInstances();
     }
+    this.officeClock += dt;
 
     // The greeter materializes and dematerializes like anyone else, but runs
     // no FSM — it stands where it spawned for as long as the ask is up.
@@ -1273,10 +1895,19 @@ export class OfficeState {
         continue; // skip normal FSM while the effect is (or just was) active
       }
 
+      // Living office: pick (or keep) where the character should be.
+      if (this.zones.zones.size > 0 && !ch.isSubagent && !ch.leaving) this.routeCharacter(ch);
+
       // Temporarily unblock own seat so character can pathfind to it
-      this.withOwnSeatUnblocked(ch, () =>
-        updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles),
-      );
+      const step = () =>
+        updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles);
+      if (ch.zoneTarget) {
+        // ...and the zone seat it's headed for.
+        this.withRouteUnblocked(ch, step);
+        this.afterZoneStep(ch, dt);
+      } else {
+        this.withOwnSeatUnblocked(ch, step);
+      }
 
       // Tick bubble timer for waiting bubbles
       if (ch.bubbleType === 'waiting') {
@@ -1291,6 +1922,9 @@ export class OfficeState {
     for (const id of toDelete) {
       this.characters.delete(id);
     }
+
+    // Living office: smokers in company face each other, not the ashtray.
+    if (this.zones.zones.has(ZoneLabel.SMOKE)) this.faceFellowSmokers();
 
     // ── Pet FSM ────────────────────────────────────────────────
     for (const pet of this.pets) {
@@ -1317,7 +1951,7 @@ export class OfficeState {
   > {
     const seats: Record<number, { palette: number; hueShift: number; seatId: string | null }> = {};
     for (const ch of this.characters.values()) {
-      if (ch.isSubagent) continue;
+      if (ch.isSubagent || ch.leaving) continue;
       seats[ch.id] = { palette: ch.palette, hueShift: ch.hueShift, seatId: ch.seatId };
     }
     return seats;
@@ -1338,8 +1972,8 @@ export class OfficeState {
   getCharacterAt(worldX: number, worldY: number): number | null {
     const chars = Array.from(this.characters.values()).sort((a, b) => b.y - a.y);
     for (const ch of chars) {
-      // Skip characters that are despawning
-      if (ch.matrixEffect === 'despawn') continue;
+      // Skip characters that are despawning (or walking out to)
+      if (ch.matrixEffect === 'despawn' || ch.leaving) continue;
       // Character sprite is 16x24, anchored bottom-center
       // Apply sitting offset to match visual position
       const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;

@@ -56,6 +56,29 @@ export interface Seat {
   assigned: boolean;
 }
 
+/**
+ * Where the living office's destination engine sent a character: a zone seat
+ * (sit) or standing spot (stand), the Entrance door on the way out, or its own
+ * desk to wait at when every zone place is taken. While a character has one,
+ * the zone branch of the FSM drives it there and keeps it there.
+ */
+export interface ZoneTarget {
+  /** Zone label (Smoke, Lounge, ...); null for "wait at its own desk". */
+  zone: string | null;
+  /** The seat uid for a seat, `spot:col,row` for a standing spot. */
+  key: string;
+  col: number;
+  row: number;
+  /** Faces the zone's key furniture once there. */
+  facing: Direction;
+  /** Sit (a seat) or stand (a spot). */
+  sit: boolean;
+  /** Not reserved (the door, its own desk): any number may share it. */
+  shared?: boolean;
+  /** Set by the FSM when no path leads there any more. */
+  unreachable?: boolean;
+}
+
 export interface FurnitureInstance {
   sprite: SpriteData;
   /** Pixel x (top-left) */
@@ -238,6 +261,24 @@ export interface Character {
    *  per-consumer guard reads this flag. It exists for the render/e2e snapshot
    *  (testHooks.getCharacters) to tell the greeter from agents. */
   isGreeter?: boolean;
+
+  // -- Living office (zones) --
+  /** Zone seat/spot the destination engine sent it to; null/absent = the
+   *  desk-and-wander FSM drives it (always, in a layout without zones). */
+  zoneTarget?: ZoneTarget | null;
+  /** Seconds spent settled at the zone target (drives the smoke break's timeline). */
+  zoneFxTimer?: number;
+  /** zoneFxTimer when it began stubbing its cigarette out (called away from a smoke). */
+  smokeStubAt?: number;
+  /** A mid-work smoker (the label shows a "🚬 break" tag): a long-running
+   *  command, or a break after long work. Absent for a smoke while waiting
+   *  on the user, and everywhere else. */
+  smokeBreak?: 'command' | 'break';
+  /** Walking out through the Entrance door after agentClosed; despawns there. */
+  leaving?: boolean;
+  /** Office-clock time it walked in through the door (a live agentCreated).
+   *  Absent for restored agents, whose session length is unknown. */
+  enteredAt?: number;
 
   // -- Agent Teams --
   /** Team name this agent belongs to */

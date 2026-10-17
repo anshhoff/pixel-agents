@@ -19,6 +19,11 @@ import {
   CARPET_DEFAULT_COLOR,
   CHARACTER_SITTING_OFFSET_PX,
   CHARACTER_Z_SORT_OFFSET,
+  CIGARETTE_ASH_COLOR,
+  CIGARETTE_PAPER_COLOR,
+  CIGARETTE_TIP_COLOR,
+  CIGARETTE_TIP_GLOW_COLOR,
+  CIGARETTE_Z_SORT_OFFSET,
   DELETE_BUTTON_BG,
   FALLBACK_FLOOR_COLOR,
   GHOST_BORDER_HOVER_FILL,
@@ -31,6 +36,8 @@ import {
   GRID_LINE_COLOR,
   HEADLESS_CHARACTER_ALPHA,
   HOVERED_OUTLINE_ALPHA,
+  LIGHTER_FLAME_COLOR,
+  LIGHTER_SPARK_COLOR,
   OUTLINE_Z_SORT_OFFSET,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
@@ -40,6 +47,7 @@ import {
   SELECTION_DASH_PATTERN,
   SELECTION_HIGHLIGHT_COLOR,
   SLEEPING_CHARACTER_ALPHA,
+  SMOKE_PUFF_COLOR,
   VOID_TILE_DASH_PATTERN,
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
@@ -63,11 +71,13 @@ import type {
   SpriteData,
   TileType as TileTypeVal,
 } from '../types.js';
-import { CharacterState, TILE_SIZE, TileType } from '../types.js';
+import { CharacterState, Direction, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
 import { getCharacterSprite } from './characters.js';
 import { renderMatrixEffect } from './matrixEffect.js';
 import { getPetSpriteData } from './petEntity.js';
+import type { SmokePuff } from './zoneEffects.js';
+import { cigarettePixels, isSmoking, mouthOffset, smokeFrame } from './zoneEffects.js';
 
 // ── Settings ────────────────────────────────────────────────────
 
@@ -456,6 +466,15 @@ export function renderScene(
         c.restore();
       },
     });
+
+    // Living office: standing at a Smoke spot, it smokes.
+    if (isSmoking(ch)) {
+      const smoker = ch;
+      drawables.push({
+        zY: charZY + CIGARETTE_Z_SORT_OFFSET,
+        draw: (c) => renderSmoking(c, smoker, offsetX, offsetY, zoom),
+      });
+    }
   }
 
   // ── Pets ──────────────────────────────────────────────
@@ -487,6 +506,69 @@ export function renderScene(
   for (const d of drawables) {
     d.draw(ctx);
   }
+}
+
+/** A cigarette at the hand (white paper, orange tip) and grey puffs rising off it. */
+function renderSmoking(
+  ctx: CanvasRenderingContext2D,
+  ch: Character,
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+): void {
+  const t = ch.zoneFxTimer ?? 0;
+  const stubT = ch.smokeStubAt !== undefined ? t - ch.smokeStubAt : null;
+  // The ashtray is the way the spot faces: ash drifts that way as it falls.
+  const towardTray = ch.zoneTarget?.facing;
+  const ashtrayDx = towardTray === Direction.RIGHT ? 1 : towardTray === Direction.LEFT ? -1 : 0;
+  const frame = smokeFrame(t, ch.id, stubT, ashtrayDx);
+  // Sprite px (relative to the feet anchor) → device px, on the sprite-pixel grid.
+  const px = (dx: number, dy: number, color: string, alpha = 1) => {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    ctx.fillRect(
+      Math.round(offsetX + (ch.x + dx) * zoom),
+      Math.round(offsetY + (ch.y + dy) * zoom),
+      zoom,
+      zoom,
+    );
+  };
+  /** Smoke squares around an anchor px, snapped to the sprite-pixel grid. */
+  const puffs = (list: SmokePuff[], ax: number, ay: number) => {
+    ctx.fillStyle = SMOKE_PUFF_COLOR;
+    for (const puff of list) {
+      const size = Math.round(puff.size);
+      ctx.globalAlpha = puff.alpha;
+      ctx.fillRect(
+        Math.round(offsetX + (ch.x + Math.round(ax + 0.5 + puff.dx - size / 2)) * zoom),
+        Math.round(offsetY + (ch.y + Math.round(ay + puff.dy - size / 2)) * zoom),
+        size * zoom,
+        size * zoom,
+      );
+    }
+  };
+  const { paper, tip } = cigarettePixels(ch.dir);
+  ctx.save();
+  if (frame.spark === 0) {
+    px(tip.dx, tip.dy - 1, LIGHTER_SPARK_COLOR); // the flick: a spark...
+  } else if (frame.spark === 1) {
+    px(tip.dx, tip.dy, LIGHTER_FLAME_COLOR); // ...then a small flame
+    px(tip.dx, tip.dy - 1, LIGHTER_SPARK_COLOR);
+  }
+  if (frame.cigarette) {
+    for (const p of paper) px(p.dx, p.dy, CIGARETTE_PAPER_COLOR);
+    if (frame.inhaling) {
+      px(tip.dx, tip.dy, CIGARETTE_TIP_GLOW_COLOR);
+    } else {
+      px(tip.dx, tip.dy, CIGARETTE_ASH_COLOR); // the dead tip under the ember...
+      px(tip.dx, tip.dy, CIGARETTE_TIP_COLOR, frame.ember); // ...fading when stubbed out
+    }
+  }
+  if (frame.ash) px(tip.dx + frame.ash.dx, tip.dy + frame.ash.dy, CIGARETTE_ASH_COLOR);
+  puffs(frame.wisps, tip.dx, tip.dy - 1);
+  const mouth = mouthOffset(ch.dir);
+  puffs(frame.exhale, mouth.dx, mouth.dy);
+  ctx.restore();
 }
 
 // ── Seat indicators ─────────────────────────────────────────────
