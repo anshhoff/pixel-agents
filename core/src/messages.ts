@@ -28,6 +28,8 @@ export type ServerMessage =
   | AgentProgress
   | DailyStats
   | AgentSleep
+  | AgentTitle
+  | AgentKind
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -95,6 +97,8 @@ export interface AgentCreated {
   hueShift?: number;
   sourceLabel?: string;
   sourceKind?: RemoteSourceKind;
+  title?: string;
+  background?: boolean;
 }
 
 export type RemoteSourceKind = 'computer' | 'cloud';
@@ -117,6 +121,8 @@ export interface ExistingAgents {
   externalAgents: Record<string, boolean>;
   sourceLabels?: Record<string, string>;
   sourceKinds?: Record<string, RemoteSourceKind>;
+  titles?: Record<string, string>;
+  backgroundAgents?: Record<string, boolean>;
 }
 
 export interface AgentSeatMeta {
@@ -247,6 +253,18 @@ export interface AgentSleep {
   id: number;
   sleeping: boolean;
   idleSince?: number;
+}
+
+export interface AgentTitle {
+  type: 'agentTitle';
+  id: number;
+  title: string;
+}
+
+export interface AgentKind {
+  type: 'agentKind';
+  id: number;
+  background: boolean;
 }
 
 export interface LayoutLoaded {

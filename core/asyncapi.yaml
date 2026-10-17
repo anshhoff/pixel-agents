@@ -104,6 +104,8 @@ components:
         - $ref: '#/components/schemas/AgentProgress'
         - $ref: '#/components/schemas/DailyStats'
         - $ref: '#/components/schemas/AgentSleep'
+        - $ref: '#/components/schemas/AgentTitle'
+        - $ref: '#/components/schemas/AgentKind'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -213,6 +215,12 @@ components:
           description: Where a relayed remote session runs (e.g. "Laptop"). Absent for local sessions.
         sourceKind:
           $ref: '#/components/schemas/RemoteSourceKind'
+        title:
+          type: string
+          description: The session's own task title (latest ai-title in its transcript). Absent until known.
+        background:
+          type: boolean
+          description: A background or headless session, shown as a compact remote-worker tile.
 
     AgentClosed:
       description: An agent has been removed from the office.
@@ -275,6 +283,16 @@ components:
           description: Map of agent ID (string) to remote source kind. Local agents are absent.
           additionalProperties:
             $ref: '#/components/schemas/RemoteSourceKind'
+        titles:
+          type: object
+          description: Map of agent ID (string) to task title. Agents without a known title are absent.
+          additionalProperties:
+            type: string
+        backgroundAgents:
+          type: object
+          description: Map of agent ID (string) to true for background/headless sessions.
+          additionalProperties:
+            type: boolean
 
     AgentStatus:
       description: Active vs waiting state for an agent (drives character animation).
@@ -484,6 +502,34 @@ components:
       description: Coarse work phase inferred from an agent's tool use.
       type: string
       enum: [explore, build, test, ship]
+
+    AgentTitle:
+      description: An agent's task title changed (a new ai-title record in its transcript).
+      type: object
+      additionalProperties: false
+      required: [type, id, title]
+      properties:
+        type:
+          const: agentTitle
+        id:
+          type: integer
+        title:
+          type: string
+
+    AgentKind:
+      description: |
+        An agent was (re)classified as background/headless or interactive, e.g. a
+        hook-only local session that never appeared in the interactive session list.
+      type: object
+      additionalProperties: false
+      required: [type, id, background]
+      properties:
+        type:
+          const: agentKind
+        id:
+          type: integer
+        background:
+          type: boolean
 
     AgentSleep:
       description: |
