@@ -23,7 +23,16 @@ import {
   TEAM_ROLE_COLOR,
   TOOL_OVERLAY_VERTICAL_OFFSET,
 } from '../../constants.js';
-import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
+import type { AgentProgressState, SubagentCharacter } from '../../hooks/useExtensionMessages.js';
+import type { PipState, WaitLevel } from '../../progress/progressFormat.js';
+import {
+  formatWait,
+  hasStageTrack,
+  PHASE_LABELS,
+  PHASES,
+  pipState,
+  waitLevel,
+} from '../../progress/progressFormat.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { overlayProjection } from '../projection.js';
 import { getCachedSprite } from '../sprites/spriteCache.js';
@@ -37,12 +46,33 @@ import { CharacterState } from '../types.js';
 // surfaces this label. Driven by Character.waitingAwaitingInput.
 const WAITING_INPUT_ACTIVITY_TEXT = 'Waiting for input';
 
+// Stage track + waiting badge rows: tiny, one line each, leading-none so a row
+// is exactly its font size plus the gap above it. The panel lifts by that much
+// so the extra rows grow it upward instead of over the character's head.
+const STAGE_TRACK_FONT_PX = 12;
+const WAIT_BADGE_FONT_PX = 14;
+const PROGRESS_ROW_GAP_PX = 2;
+
+const PIP_COLORS: Record<PipState, string> = {
+  done: 'var(--color-status-success)',
+  current: 'var(--color-status-permission)',
+  off: 'var(--color-text-muted)',
+};
+
+const WAIT_COLORS: Record<WaitLevel, string> = {
+  none: 'var(--color-text-muted)',
+  yellow: 'var(--color-status-permission)',
+  red: 'var(--color-status-error)',
+};
+
 interface ToolOverlayProps {
   officeState: OfficeState;
   agents: number[];
   agentTools: Record<number, ToolActivity[]>;
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
   subagentCharacters: SubagentCharacter[];
+  /** Stage track + waiting clock per top-level agent (agentProgress). */
+  agentProgress: Record<number, AgentProgressState>;
   containerRef: React.RefObject<HTMLDivElement | null>;
   zoom: number;
   panRef: React.RefObject<{ x: number; y: number }>;
@@ -89,6 +119,33 @@ function getFuelColor(ratio: number): string {
   return CONTEXT_GAUGE_COLOR_OK;
 }
 
+/** EXPLORE · BUILD · TEST · SHIP: reached green, current yellow, the rest dim. */
+function StageTrack({ progress }: { progress: AgentProgressState }) {
+  return (
+    <span
+      className="flex items-center gap-3 leading-none"
+      style={{ fontSize: STAGE_TRACK_FONT_PX, marginTop: PROGRESS_ROW_GAP_PX }}
+      data-testid="stage-track"
+    >
+      {PHASES.map((phase, i) => {
+        const state = pipState(phase, progress.reached, progress.phase);
+        return (
+          <Fragment key={phase}>
+            {i > 0 && <span className="text-text-muted opacity-60">·</span>}
+            <span
+              style={{ color: PIP_COLORS[state], opacity: state === 'off' ? 0.6 : 1 }}
+              data-pip={phase}
+              data-pip-state={state}
+            >
+              {PHASE_LABELS[phase]}
+            </span>
+          </Fragment>
+        );
+      })}
+    </span>
+  );
+}
+
 /** A speech-bubble sprite blitted into a DOM canvas. Bubbles live in the DOM
  *  (not the office canvas) so they can stack ABOVE the status label panels —
  *  canvas content can never out-paint the DOM overlay. */
@@ -116,6 +173,7 @@ export function ToolOverlay({
   agentTools,
   subagentTools,
   subagentCharacters,
+  agentProgress,
   containerRef,
   zoom,
   panRef,
@@ -123,9 +181,14 @@ export function ToolOverlay({
   alwaysShowOverlay,
 }: ToolOverlayProps) {
   const [, setTick] = useState(0);
+  // Wall clock of the latest frame. This loop already re-renders the overlay
+  // every frame (positions follow the characters), so the waiting badge counts
+  // up from it with no timer of its own.
+  const nowRef = useRef(0);
   useEffect(() => {
     let rafId = 0;
     const tick = () => {
+      nowRef.current = Date.now();
       setTick((n) => n + 1);
       rafId = requestAnimationFrame(tick);
     };
@@ -288,6 +351,19 @@ export function ToolOverlay({
         const contextRatio = ch.contextTokens / ch.maxContextTokens;
         const showContextGauge = !isSub && ch.contextTokens > 0;
 
+        // Stage track and waiting badge: top-level agents only (a sub-agent has
+        // no cycle of its own). The badge shows from the first moment of a wait;
+        // its color steps up at 5 and 15 minutes.
+        const progress = isSub ? undefined : agentProgress[id];
+        const trackProgress = progress && hasStageTrack(progress) ? progress : null;
+        const waitMs =
+          progress?.waitingSince !== undefined
+            ? Math.max(0, nowRef.current - progress.waitingSince)
+            : null;
+        const progressLiftPx =
+          (trackProgress ? STAGE_TRACK_FONT_PX + PROGRESS_ROW_GAP_PX : 0) +
+          (waitMs !== null ? WAIT_BADGE_FONT_PX + PROGRESS_ROW_GAP_PX : 0);
+
         return (
           <Fragment key={id}>
             {bubbleNode}
@@ -295,7 +371,7 @@ export function ToolOverlay({
               className="absolute flex flex-col items-center -translate-x-1/2"
               style={{
                 left: screenX,
-                top: screenY - (hasExtraLines ? 34 : 28),
+                top: screenY - (hasExtraLines ? 34 : 28) - progressLiftPx,
                 pointerEvents: isSelected ? 'auto' : 'none',
                 opacity: alwaysShowOverlay && !isSelected && !isHovered ? (isSub ? 0.5 : 0.75) : 1,
                 zIndex: isSelected ? OVERLAY_LABEL_SELECTED_Z_INDEX : OVERLAY_LABEL_Z_INDEX,
@@ -335,6 +411,21 @@ export function ToolOverlay({
                   {originLabel && (
                     <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
                       {originLabel}
+                    </span>
+                  )}
+                  {trackProgress && <StageTrack progress={trackProgress} />}
+                  {waitMs !== null && (
+                    <span
+                      className="block leading-none"
+                      style={{
+                        fontSize: WAIT_BADGE_FONT_PX,
+                        marginTop: PROGRESS_ROW_GAP_PX,
+                        color: WAIT_COLORS[waitLevel(waitMs)],
+                      }}
+                      data-testid="waiting-badge"
+                      data-wait-level={waitLevel(waitMs)}
+                    >
+                      ⏳ waiting on you {formatWait(waitMs)}
                     </span>
                   )}
                 </div>

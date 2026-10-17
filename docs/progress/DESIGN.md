@@ -68,7 +68,14 @@ Both are broadcast on change. On connect, the server sends `dailyStats` and an `
 ## Tasks
 
 - [x] Protocol: AgentProgress, DailyStats, WorkPhase, DailyPr, DailyPush
-- [ ] Server: phase rules + tracker + persistence + wiring + connect snapshot (tests)
-- [ ] Relay: `pr_url` (tests)
-- [ ] Web UI: label pips + waiting badge + DailyStrip + helpers (tests)
+- [x] Server: phase rules + tracker + persistence + wiring + connect snapshot (164 tests)
+- [x] Relay: `pr_url` (3 tests)
+- [x] Web UI: label pips + waiting badge + DailyStrip + helpers (18 tests)
+
+Implementation notes:
+
+- Commit → push → PR in a row is one ship step; the next non-ship tool starts a new cycle.
+- Bare runtimes (no StateAdapter, e.g. tests) keep totals in memory.
+- An active span still open when an agent is removed is not counted, so an expired remote agent doesn't add 3 h.
+- Agents without hooks (transcript only) contribute tool starts and `pr-link` PRs, but not pushes.
 - [ ] Integrate: build, full checks, live run through the board, screenshots (TV + phone)

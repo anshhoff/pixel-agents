@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { HooksConsentRequest } from '../../../core/src/messages.js';
+import type {
+  AgentProgress,
+  DailyStats,
+  HooksConsentRequest,
+  WorkPhase,
+} from '../../../core/src/messages.js';
 import { playDoneSound, playPermissionSound, setSoundEnabled } from '../notificationSound.js';
 import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingAgents.js';
 import { reconcileExistingAgents } from '../office/engine/existingAgents.js';
@@ -87,6 +92,9 @@ export interface DirectorySaved {
   seq: number;
 }
 
+/** One agent's stage track + waiting clock (agentProgress), minus the envelope. */
+export type AgentProgressState = Omit<AgentProgress, 'type' | 'id'>;
+
 interface ExtensionMessageState {
   agents: number[];
   selectedAgent: number | null;
@@ -98,6 +106,10 @@ interface ExtensionMessageState {
   agentSeenActivity: Record<number, boolean>;
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
   subagentCharacters: SubagentCharacter[];
+  /** Latest agentProgress per agent: replaced whole on every message. */
+  agentProgress: Record<number, AgentProgressState>;
+  /** Latest dailyStats; null until the server sends the first one. */
+  dailyStats: DailyStats | null;
   layoutReady: boolean;
   layoutWasReset: boolean;
   loadedAssets?: { catalog: FurnitureAsset[]; sprites: Record<string, string[][]> };
@@ -189,6 +201,8 @@ export function useExtensionMessages(
     Record<number, Record<string, ToolActivity[]>>
   >({});
   const [subagentCharacters, setSubagentCharacters] = useState<SubagentCharacter[]>([]);
+  const [agentProgress, setAgentProgress] = useState<Record<number, AgentProgressState>>({});
+  const [dailyStats, setDailyStats] = useState<DailyStats | null>(null);
   const [layoutReady, setLayoutReady] = useState(false);
   const [layoutWasReset, setLayoutWasReset] = useState(false);
   const [loadedAssets, setLoadedAssets] = useState<
@@ -406,6 +420,7 @@ export function useExtensionMessages(
         setAgentAwaitingInput((prev) => omitKey(prev, id));
         setAgentSeenActivity((prev) => omitKey(prev, id));
         setSubagentTools((prev) => omitKey(prev, id));
+        setAgentProgress((prev) => omitKey(prev, id));
         // Remove all sub-agent characters belonging to this agent
         delete backgroundParentToolIdsRef.current[id];
         os.removeAllSubagents(id);
@@ -855,6 +870,26 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentContextUsage') {
         const id = msg.id as number;
         os.setAgentContext(id, msg.contextTokens as number, msg.maxContextTokens as number);
+      } else if (msg.type === 'agentProgress') {
+        // A full snapshot of the agent's cycle (also resent on connect), so it
+        // replaces whatever was held rather than merging into it.
+        const id = msg.id as number;
+        const progress: AgentProgressState = {
+          phase: msg.phase as WorkPhase | undefined,
+          reached: Array.isArray(msg.reached) ? (msg.reached as WorkPhase[]) : [],
+          waitingSince: typeof msg.waitingSince === 'number' ? msg.waitingSince : undefined,
+        };
+        setAgentProgress((prev) => ({ ...prev, [id]: progress }));
+      } else if (msg.type === 'dailyStats') {
+        setDailyStats({
+          type: 'dailyStats',
+          date: msg.date as string,
+          prs: Array.isArray(msg.prs) ? msg.prs : [],
+          pushes: Array.isArray(msg.pushes) ? msg.pushes : [],
+          filesEdited: (msg.filesEdited as number) ?? 0,
+          commandsRun: (msg.commandsRun as number) ?? 0,
+          activeMs: (msg.activeMs as number) ?? 0,
+        });
       }
     };
     const unsubscribe = transport.onMessage(handler);
@@ -887,6 +922,8 @@ export function useExtensionMessages(
     agentSeenActivity,
     subagentTools,
     subagentCharacters,
+    agentProgress,
+    dailyStats,
     layoutReady,
     layoutWasReset,
     loadedAssets,

@@ -5,6 +5,7 @@ import { AgentCardBar } from './components/AgentCardBar.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
+import { DailyStrip } from './components/DailyStrip.js';
 import { DebugView } from './components/DebugView.js';
 import { DirectoryModal } from './components/DirectoryModal.js';
 import { EditActionBar } from './components/EditActionBar.js';
@@ -88,6 +89,8 @@ function App() {
     agentSeenActivity,
     subagentTools,
     subagentCharacters,
+    agentProgress,
+    dailyStats,
     layoutReady,
     layoutWasReset,
     loadedAssets,
@@ -574,12 +577,23 @@ function App() {
             agentTools={agentTools}
             subagentTools={subagentTools}
             subagentCharacters={subagentCharacters}
+            agentProgress={agentProgress}
             containerRef={containerRef}
             zoom={editor.zoom}
             panRef={editor.panRef}
             onCloseAgent={handleCloseAgent}
             alwaysShowOverlay={alwaysShowOverlay}
           />
+
+          {/* Done-today strip. Hidden while editing: the editor toolbar takes
+              the slot above the BottomToolbar that the strip uses. */}
+          {!editor.isEditMode && (
+            <DailyStrip
+              stats={dailyStats}
+              compact={isMobile}
+              aboveToolbar={!isMobile && !officeReadOnly}
+            />
+          )}
         </>
       ) : (
         <DebugView
