@@ -1040,9 +1040,11 @@ export function adoptExternalSessionFromHook(
 
     knownJsonlFiles.add(transcriptPath);
     const projectDir = path.dirname(transcriptPath);
+    // The hook's cwd is the real path; the encoded project dir has lost which
+    // dashes were separators ("hobbyfi-blog-automation" would read "automation").
     const directoryName =
       directoryNameResolver?.({ cwd, projectDir }) ??
-      directoryNameFromProjectDir(path.basename(projectDir));
+      (cwd ? path.basename(cwd) : directoryNameFromProjectDir(path.basename(projectDir)));
 
     adoptExternalSession(
       transcriptPath,
