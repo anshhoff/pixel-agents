@@ -103,6 +103,7 @@ components:
         # Progress (stage track + done-today strip)
         - $ref: '#/components/schemas/AgentProgress'
         - $ref: '#/components/schemas/DailyStats'
+        - $ref: '#/components/schemas/AgentSleep'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -483,6 +484,26 @@ components:
       description: Coarse work phase inferred from an agent's tool use.
       type: string
       enum: [explore, build, test, ship]
+
+    AgentSleep:
+      description: |
+        Whether an agent's session is open but idle ("sleeping"): Claude Code's own
+        session list reports it idle and its transcript has been quiet for a while.
+        Sleeping agents render dimmed with a 💤 label. Sent on every change and, for
+        every sleeping agent, when a client connects.
+      type: object
+      additionalProperties: false
+      required: [type, id, sleeping]
+      properties:
+        type:
+          const: agentSleep
+        id:
+          type: integer
+        sleeping:
+          type: boolean
+        idleSince:
+          type: integer
+          description: Epoch ms of the session's last activity. Present while sleeping.
 
     AgentProgress:
       description: |

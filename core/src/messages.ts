@@ -27,6 +27,7 @@ export type ServerMessage =
   | AgentContextUsage
   | AgentProgress
   | DailyStats
+  | AgentSleep
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -239,6 +240,13 @@ export interface DailyPr {
 export interface DailyPush {
   repo: string;
   count: number;
+}
+
+export interface AgentSleep {
+  type: 'agentSleep';
+  id: number;
+  sleeping: boolean;
+  idleSince?: number;
 }
 
 export interface LayoutLoaded {
