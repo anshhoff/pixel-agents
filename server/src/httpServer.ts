@@ -82,7 +82,14 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
     // and `/terminal/:id?token=` handshakes, so the url is redacted before it
     // is written -- otherwise every (re)connect would put the secret in stdout
     // and any log file (see wsAuth.redactTokenQuery).
-    logger: options.embedded ? false : { serializers: { req: serializeRequestForLog } },
+    // PIXEL_AGENTS_LOG_LEVEL=warn drops the two request lines logged per hook
+    // event, for a server left running 24x7 (remote/windows/autostart.ps1 sets it).
+    logger: options.embedded
+      ? false
+      : {
+          level: process.env.PIXEL_AGENTS_LOG_LEVEL || 'info',
+          serializers: { req: serializeRequestForLog },
+        },
     bodyLimit: MAX_HOOK_BODY_SIZE,
   });
 
