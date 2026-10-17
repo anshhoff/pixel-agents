@@ -30,6 +30,10 @@ export type ServerMessage =
   | AgentSleep
   | AgentTitle
   | AgentKind
+  | TasksSnapshot
+  | TaskUpdated
+  | ReportReady
+  | Report
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -80,7 +84,10 @@ export type ClientMessage =
   | SaveDirectory
   | RemoveDirectory
   | RequestDirectorySuggestions
-  | RequestDiagnostics;
+  | RequestDiagnostics
+  | RequestTasks
+  | RequestReport
+  | WriteReportNow;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -265,6 +272,50 @@ export interface AgentKind {
   type: 'agentKind';
   id: number;
   background: boolean;
+}
+
+export interface TasksSnapshot {
+  type: 'tasksSnapshot';
+  date: string;
+  tasks: Task[];
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  repo: string;
+  machine: string;
+  sessionId: string;
+  startedAt: number;
+  endedAt?: number;
+  status: TaskStatus;
+  prs: DailyPr[];
+  pushes: number;
+  filesEdited: number;
+  commands: number;
+  activeMs: number;
+}
+
+export type TaskStatus = 'in_progress' | 'waiting' | 'done';
+
+export interface TaskUpdated {
+  type: 'taskUpdated';
+  task: Task;
+}
+
+export interface ReportReady {
+  type: 'reportReady';
+  date: string;
+}
+
+export interface Report {
+  type: 'report';
+  date: string;
+  exists: boolean;
+  markdown?: string;
+  generatedAt?: number;
+  aiWritten?: boolean;
+  writing?: boolean;
 }
 
 export interface LayoutLoaded {
@@ -580,4 +631,18 @@ export interface RequestDirectorySuggestions {
 
 export interface RequestDiagnostics {
   type: 'requestDiagnostics';
+}
+
+export interface RequestTasks {
+  type: 'requestTasks';
+  date: string;
+}
+
+export interface RequestReport {
+  type: 'requestReport';
+  date: string;
+}
+
+export interface WriteReportNow {
+  type: 'writeReportNow';
 }

@@ -106,6 +106,11 @@ components:
         - $ref: '#/components/schemas/AgentSleep'
         - $ref: '#/components/schemas/AgentTitle'
         - $ref: '#/components/schemas/AgentKind'
+        # Manager: task log + reports
+        - $ref: '#/components/schemas/TasksSnapshot'
+        - $ref: '#/components/schemas/TaskUpdated'
+        - $ref: '#/components/schemas/ReportReady'
+        - $ref: '#/components/schemas/Report'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -164,6 +169,10 @@ components:
         - $ref: '#/components/schemas/RemoveDirectory'
         - $ref: '#/components/schemas/RequestDirectorySuggestions'
         - $ref: '#/components/schemas/RequestDiagnostics'
+        # Manager: task log + reports
+        - $ref: '#/components/schemas/RequestTasks'
+        - $ref: '#/components/schemas/RequestReport'
+        - $ref: '#/components/schemas/WriteReportNow'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -530,6 +539,108 @@ components:
           type: integer
         background:
           type: boolean
+
+    TaskStatus:
+      type: string
+      enum: [in_progress, waiting, done]
+
+    Task:
+      description: |
+        One task in the Manager's log: a session's title period (a new title starts
+        a new task). Stats are attributed to the task that was live when they happened.
+      type: object
+      additionalProperties: false
+      required:
+        [id, title, repo, machine, sessionId, startedAt, status, prs, pushes, filesEdited, commands, activeMs]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        repo:
+          type: string
+        machine:
+          type: string
+          description: '"local" or the remote source label (e.g. "Mac").'
+        sessionId:
+          type: string
+        startedAt:
+          type: integer
+        endedAt:
+          type: integer
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        prs:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyPr'
+        pushes:
+          type: integer
+        filesEdited:
+          type: integer
+        commands:
+          type: integer
+        activeMs:
+          type: integer
+
+    TasksSnapshot:
+      description: One day's task log. Sent for today on connect, and in reply to requestTasks.
+      type: object
+      additionalProperties: false
+      required: [type, date, tasks]
+      properties:
+        type:
+          const: tasksSnapshot
+        date:
+          type: string
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+
+    TaskUpdated:
+      description: A task of today's log was created or changed.
+      type: object
+      additionalProperties: false
+      required: [type, task]
+      properties:
+        type:
+          const: taskUpdated
+        task:
+          $ref: '#/components/schemas/Task'
+
+    ReportReady:
+      description: The Manager finished a report for this date (clients may requestReport it).
+      type: object
+      additionalProperties: false
+      required: [type, date]
+      properties:
+        type:
+          const: reportReady
+        date:
+          type: string
+
+    Report:
+      description: A day's Manager report, in reply to requestReport. `exists` is false when none was written.
+      type: object
+      additionalProperties: false
+      required: [type, date, exists]
+      properties:
+        type:
+          const: report
+        date:
+          type: string
+        exists:
+          type: boolean
+        markdown:
+          type: string
+        generatedAt:
+          type: integer
+        aiWritten:
+          type: boolean
+        writing:
+          type: boolean
+          description: True while a report for this date is being written.
 
     AgentSleep:
       description: |
@@ -1494,6 +1605,39 @@ components:
       properties:
         type:
           const: requestDiagnostics
+
+    RequestTasks:
+      description: Ask for one day's task log (server responds with tasksSnapshot). Allowed for read-only clients.
+      type: object
+      additionalProperties: false
+      required: [type, date]
+      properties:
+        type:
+          const: requestTasks
+        date:
+          type: string
+          description: Local date, YYYY-MM-DD.
+
+    RequestReport:
+      description: Ask for one day's Manager report (server responds with report). Allowed for read-only clients.
+      type: object
+      additionalProperties: false
+      required: [type, date]
+      properties:
+        type:
+          const: requestReport
+        date:
+          type: string
+          description: Local date, YYYY-MM-DD.
+
+    WriteReportNow:
+      description: Have the Manager write today's report now. Privileged only (it uses the Claude subscription).
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: writeReportNow
 
     # ── Supporting schemas ─────────────────────────────────────────
 

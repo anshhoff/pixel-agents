@@ -96,5 +96,72 @@ Effects drawn by the renderer rather than shipped as furniture: smoke puffs, con
 - **A. Living office**: zones in the layout, destination engine, entrance walk in/out,
   smoke, lounge, meeting, server. Also task-title labels, remote-worker tiles for background
   agents, and ntfy phone alerts.
+- **M. Manager + task log** (approved 2026-10-17, built right after A):
+  - **Task log (server, `server/src/tasks/`)**:
+    - A task is a session's title period. A new or changed `ai-title` closes the previous task as done and opens a new one.
+    - Before a title arrives the task is `Untitled · <repo>`; it is renamed, not replaced, when the first title comes.
+    - A remote session with no transcript is one task per session, `💻 <source> · <repo>`.
+    - Status: `in_progress` (active), `waiting` (waiting on the user), `done` (title changed, or the session ended or expired).
+    - Fields: id, title, repo, machine (local or source label), sessionId, startedAt, endedAt, status, PRs[], pushes, filesEdited, commands, activeMs.
+    - Stats are attributed to the task live at the time, reusing ProgressTracker's per-event counting.
+    - Stored in `~/.pixel-agents/tasks/YYYY-MM-DD.json` (atomic writes) and kept forever.
+    - Sessions whose cwd is the manager's working dir are excluded.
+    - Protocol: a `tasksSnapshot` (today) on connect, `taskUpdated` on change, and a `requestTasks {date}` request that read-only clients may send (viewing only).
+  - **Reports**:
+    - Generated daily at 19:00 local, or from "Write report now" (privileged clients only; it uses the subscription).
+    - The server builds a compact JSON of the day's tasks and runs `claude -p --tools "" --no-session-persistence --output-format text` (execFile, no shell, cwd `~/.pixel-agents/manager`, timeout 120 s). The prompt asks for a short manager-style report:
+      - done today
+      - still open
+      - waiting on Ansh
+      - PRs shipped
+      - stuck or failing items
+      - one line of advice
+    - `--bare` is not used: it skips subscription auth.
+    - On failure, a deterministic template report is written instead.
+    - Saved to `~/.pixel-agents/reports/YYYY-MM-DD.json` (markdown, generatedAt, aiWritten).
+    - Pushed via ntfy: `📋 Daily report: N done, N open, N waiting`.
+    - Protocol: `reportReady {date}`, and `requestReport {date}` (read-only allowed).
+  - **Office**:
+    - A private **"Ansh" room** (zone label `Ansh`) with the user's chibi at a desk and a door sign.
+    - Permission requests knock on its door (replacing Meeting for permissions; questions still go to Meeting).
+    - A **Manager** NPC with a clipboard at a desk outside the room. At report time the Manager walks into Ansh's office and back.
+    - Clicking or tapping the Manager opens the **Tasks board**:
+      - kanban columns In progress / Waiting on you / Done
+      - a date picker for history
+      - a Report tab with the rendered markdown
+      - "Write report now" for privileged clients
 - **B. Celebrations**: bell (with sound), confetti, trophies on the trophy wall.
 - **C. Ambience**: café coffee runs, cat, day/night windows and lights, name plates.
+- **D. Useful signals** (queued 2026-10-17):
+  - **Trouble**:
+    - Each failed tool (PostToolUseFailure, or a shell command that exits non-zero) puts a small 🔥 on the desk.
+    - 3 failures in a row turn on a red alarm lamp ("stuck?").
+    - Cleared on a success.
+  - **Loop detector**: the same tool and input repeated, or no new file/phase progress for N minutes while active, shows 🌀 "going in circles?".
+  - **Ansh's office**: moved into phase M.
+  - **Tap-for-timeline**: tapping or clicking a character opens its last ~10 actions, today's PRs and pushes, and its time worked. The server keeps a small ring buffer per agent.
+  - **Spend/token meter**:
+    - Today's tokens, read from transcript usage records, on the TODAY strip.
+    - An estimated $ figure from a pricing table that is checked against current Claude pricing at build time, never from memory, and labelled "est.".
+- **E. Fun** (queued 2026-10-17):
+  - **Festival decorations by local date**: Diwali lights, Holi colours, New Year.
+  - **Rituals**: a 10:00 standup where awake characters gather in Meeting for 30 s; at 19:00 a "today: N PRs 🎉" banner and the lights dim.
+  - **Whiteboard / library / crowns**: plan mode → draw at the whiteboard; WebSearch/WebFetch → read at a bookshelf; team leads wear a crown.
+  - **Week wall**: past days from ~/.pixel-agents/daily/ as a wall calendar with streaks.
+  - **Weather**: real weather in the windows, for a city guessed once from the PC's IP and cached.
+  - **Lo-fi radio**: a toggle in the lounge.
+- **F. Office life** (queued 2026-10-17):
+  - **Smart pets** (built-in pets `gitcat` and `claudio`):
+    - **Gitcat** sits on the desk of the busiest agent (most tool starts in the last 10 min), naps on a Lounge sofa next to sleeping agents, and sometimes follows a smoker to the terrace.
+    - **Claudio** greets every new arrival at the Entrance door, and runs over and bounces around an agent that just pushed or opened a PR.
+  - **Fish tank**: a new sprite in the Lounge. Its bubble rate scales with the number of active agents.
+  - **Receptionist**: an NPC seated at RECEPTION_DESK who waves when an agent walks in.
+  - **Real clocks**: the wall CLOCK sprites draw hands showing the PC's local time.
+  - **Pizza party**: after 3+ PRs in a local day, pizza boxes appear on the Cafe tables until midnight. Awake idle agents sometimes take a slice.
+  - **Ping-pong**: a new table sprite in the Lounge. When 2+ agents are idle-awake and not smoking, sometimes two play a 30-60 s rally.
+  - **Printer**: a new sprite. It prints a page (paper slides out) when a session Writes a `.md`, `.pdf`, `.docx` or `.txt` file.
+  - **Notice board**:
+    - A wall board listing open PRs and issues for the repos seen today.
+    - The server polls `gh` every 10 min, via execFile with no shell, and only if `gh` is authenticated.
+    - Titles only.
+  - **Growing plants**: plants in Dev and Lounge grow through 3 stages over the week with the week's PR count (from the daily files). They reset on Monday.
