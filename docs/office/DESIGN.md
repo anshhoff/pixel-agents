@@ -165,3 +165,20 @@ Effects drawn by the renderer rather than shipped as furniture: smoke puffs, con
     - The server polls `gh` every 10 min, via execFile with no shell, and only if `gh` is authenticated.
     - Titles only.
   - **Growing plants**: plants in Dev and Lounge grow through 3 stages over the week with the week's PR count (from the daily files). They reset on Monday.
+- **G. Functional** (approved 2026-10-18):
+  - **"Needs you" inbox**: a 📥 N button by the TODAY strip (a chip on phones) listing every agent waiting on the user, oldest first. Each row has a reason (✅ turn done / 🔐 permission / ❓ question), `title · repo · machine` and the wait time, which turns red after 15 min.
+  - **Open in Claude**:
+    - Transcripts record `{"type":"bridge-session","bridgeSessionId":"cse_…"}` while Remote Control is on, and the user's settings turn it on at startup.
+    - Link: `https://claude.ai/code/` + the id with `cse_` replaced by `session_`.
+    - Without one, show a copy button with `cd <cwd> && claude --resume <sessionId>`.
+    - Remote (Mac) sessions get the copy fallback; their session id is the relay's id without the `<source>:` prefix.
+  - **Usage-limit tracker**:
+    - Detected (best-effort) from the `StopFailure` hook payload, transcript API-error records (`isApiErrorMessage`, error type `rate_limit`), and Notification messages mentioning a usage limit. Parse the reset time when present.
+    - The agent shows ⏸️ "paused until <time>" and is not routed as "waiting on you".
+    - The inbox has a "Paused by usage limit" group.
+    - The TODAY strip shows "⏸️ N paused · resume <time>".
+    - The flag clears at the reset time or on the next activity.
+  - **Time per repo + CSV** (after M and the token meter):
+    - A "Time" tab in the Tasks board with a week table per repo: active hours, tasks, PRs, pushes, tokens, est. $. Day drill-down.
+    - CSV export (week or month): one row per repo per day.
+    - Read-only clients may view and export.
