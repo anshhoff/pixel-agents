@@ -25,6 +25,8 @@ export type ServerMessage =
   | SubagentToolPermission
   | AgentTeamInfo
   | AgentContextUsage
+  | AgentProgress
+  | DailyStats
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -205,6 +207,38 @@ export interface AgentContextUsage {
   id: number;
   contextTokens: number;
   maxContextTokens: number;
+}
+
+export interface AgentProgress {
+  type: 'agentProgress';
+  id: number;
+  phase?: WorkPhase;
+  reached: WorkPhase[];
+  waitingSince?: number;
+}
+
+export type WorkPhase = 'explore' | 'build' | 'test' | 'ship';
+
+export interface DailyStats {
+  type: 'dailyStats';
+  date: string;
+  prs: DailyPr[];
+  pushes: DailyPush[];
+  filesEdited: number;
+  commandsRun: number;
+  activeMs: number;
+}
+
+export interface DailyPr {
+  title: string;
+  repo: string;
+  url?: string;
+  at: number;
+}
+
+export interface DailyPush {
+  repo: string;
+  count: number;
 }
 
 export interface LayoutLoaded {

@@ -100,6 +100,9 @@ components:
         - $ref: '#/components/schemas/AgentTeamInfo'
         # Context window
         - $ref: '#/components/schemas/AgentContextUsage'
+        # Progress (stage track + done-today strip)
+        - $ref: '#/components/schemas/AgentProgress'
+        - $ref: '#/components/schemas/DailyStats'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -475,6 +478,91 @@ components:
           type: integer
         maxContextTokens:
           type: integer
+
+    WorkPhase:
+      description: Coarse work phase inferred from an agent's tool use.
+      type: string
+      enum: [explore, build, test, ship]
+
+    AgentProgress:
+      description: |
+        An agent's stage track: the phase of its most recent classified tool, the
+        phases reached in the current cycle (in the order first reached), and when
+        it began waiting on the user. A cycle resets after a ship or 30 min idle.
+        Sent on every change and, for every agent, when a client connects.
+      type: object
+      additionalProperties: false
+      required: [type, id, reached]
+      properties:
+        type:
+          const: agentProgress
+        id:
+          type: integer
+        phase:
+          $ref: '#/components/schemas/WorkPhase'
+        reached:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkPhase'
+        waitingSince:
+          type: integer
+          description: Epoch ms the agent started waiting on the user. Absent while it works.
+
+    DailyPr:
+      description: A pull request an agent opened today.
+      type: object
+      additionalProperties: false
+      required: [title, repo, at]
+      properties:
+        title:
+          type: string
+        repo:
+          type: string
+        url:
+          type: string
+        at:
+          type: integer
+          description: Epoch ms.
+
+    DailyPush:
+      description: Pushes to one repo today.
+      type: object
+      additionalProperties: false
+      required: [repo, count]
+      properties:
+        repo:
+          type: string
+        count:
+          type: integer
+
+    DailyStats:
+      description: |
+        Today's totals across every agent (local day, resets at midnight, survives
+        server restarts). Sent on every change and when a client connects.
+      type: object
+      additionalProperties: false
+      required: [type, date, prs, pushes, filesEdited, commandsRun, activeMs]
+      properties:
+        type:
+          const: dailyStats
+        date:
+          type: string
+          description: Local date, YYYY-MM-DD.
+        prs:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyPr'
+        pushes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyPush'
+        filesEdited:
+          type: integer
+        commandsRun:
+          type: integer
+        activeMs:
+          type: integer
+          description: Time agents spent working (not waiting on the user), summed.
 
     LayoutLoaded:
       description: |
