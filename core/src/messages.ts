@@ -90,7 +90,11 @@ export interface AgentCreated {
   isExternal?: boolean;
   palette?: number;
   hueShift?: number;
+  sourceLabel?: string;
+  sourceKind?: RemoteSourceKind;
 }
+
+export type RemoteSourceKind = 'computer' | 'cloud';
 
 export interface AgentClosed {
   type: 'agentClosed';
@@ -108,6 +112,8 @@ export interface ExistingAgents {
   agentMeta: Record<string, AgentSeatMeta>;
   directoryNames: Record<string, string>;
   externalAgents: Record<string, boolean>;
+  sourceLabels?: Record<string, string>;
+  sourceKinds?: Record<string, RemoteSourceKind>;
 }
 
 export interface AgentSeatMeta {

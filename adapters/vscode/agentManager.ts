@@ -520,12 +520,18 @@ export function sendExistingAgents(
   // Include directoryName and isExternal per agent
   const directoryNames: Record<number, string> = {};
   const externalAgents: Record<number, boolean> = {};
+  const sourceLabels: Record<number, string> = {};
+  const sourceKinds: Record<number, 'computer' | 'cloud'> = {};
   for (const [id, agent] of agents) {
     if (agent.directoryName) {
       directoryNames[id] = agent.directoryName;
     }
     if (agent.isExternal) {
       externalAgents[id] = true;
+    }
+    if (agent.remoteSource) {
+      sourceLabels[id] = agent.remoteSource.label;
+      sourceKinds[id] = agent.remoteSource.kind;
     }
   }
   console.log(
@@ -538,6 +544,8 @@ export function sendExistingAgents(
     agentMeta,
     directoryNames,
     externalAgents,
+    sourceLabels,
+    sourceKinds,
   });
   // Note: sendCurrentAgentStatuses is called separately AFTER layoutLoaded
   // so that agentStatus/agentToolStart messages arrive after characters are created.

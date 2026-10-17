@@ -204,6 +204,11 @@ components:
         hueShift:
           type: integer
           description: Server-assigned hue shift in degrees (0-360).
+        sourceLabel:
+          type: string
+          description: Where a relayed remote session runs (e.g. "Laptop"). Absent for local sessions.
+        sourceKind:
+          $ref: '#/components/schemas/RemoteSourceKind'
 
     AgentClosed:
       description: An agent has been removed from the office.
@@ -256,6 +261,16 @@ components:
           description: Map of agent ID (string) to external flag.
           additionalProperties:
             type: boolean
+        sourceLabels:
+          type: object
+          description: Map of agent ID (string) to remote source label. Local agents are absent.
+          additionalProperties:
+            type: string
+        sourceKinds:
+          type: object
+          description: Map of agent ID (string) to remote source kind. Local agents are absent.
+          additionalProperties:
+            $ref: '#/components/schemas/RemoteSourceKind'
 
     AgentStatus:
       description: Active vs waiting state for an agent (drives character animation).
@@ -280,6 +295,11 @@ components:
       description: Activity state of an agent.
       type: string
       enum: [active, waiting]
+
+    RemoteSourceKind:
+      description: What a relayed remote session runs on.
+      type: string
+      enum: [computer, cloud]
 
     AgentToolStart:
       description: Agent began executing a tool.

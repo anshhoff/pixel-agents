@@ -592,6 +592,8 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   const agentIds: number[] = [];
   const directoryNames: Record<number, string> = {};
   const externalAgents: Record<number, boolean> = {};
+  const sourceLabels: Record<number, string> = {};
+  const sourceKinds: Record<number, 'computer' | 'cloud'> = {};
   const persistedSeats = adapter?.loadSeats() ?? {};
   const agentMeta: Record<number, { palette?: number; hueShift?: number; seatId?: string }> = {};
   for (const [id, agent] of store) {
@@ -601,6 +603,10 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     }
     if (agent.isExternal) {
       externalAgents[id] = true;
+    }
+    if (agent.remoteSource) {
+      sourceLabels[id] = agent.remoteSource.label;
+      sourceKinds[id] = agent.remoteSource.kind;
     }
     const persisted = persistedSeats[String(id)];
     agentMeta[id] = {
@@ -615,6 +621,8 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     agentMeta,
     directoryNames,
     externalAgents,
+    sourceLabels,
+    sourceKinds,
   });
 
   // 7. Layout last (see step 3): flushes the webview's buffered existingAgents

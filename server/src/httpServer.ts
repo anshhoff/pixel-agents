@@ -232,6 +232,8 @@ function registerWebSocketRoute(
         hooksOnly: agent.hooksOnly || undefined,
         palette: agent.palette,
         hueShift: agent.hueShift,
+        sourceLabel: agent.remoteSource?.label,
+        sourceKind: agent.remoteSource?.kind,
       });
     };
 

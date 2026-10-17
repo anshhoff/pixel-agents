@@ -387,6 +387,11 @@ export function useExtensionMessages(
             os.setHeadless(id, true);
           }
         }
+        const sourceLabel = msg.sourceLabel as string | undefined;
+        const sourceKind = msg.sourceKind as 'computer' | 'cloud' | undefined;
+        if (sourceLabel && sourceKind) {
+          os.agentSources.set(id, { label: sourceLabel, kind: sourceKind });
+        }
         saveAgentSeats(os);
       } else if (msg.type === 'agentClosed') {
         const id = msg.id as number;
@@ -406,15 +411,21 @@ export function useExtensionMessages(
         os.removeAllSubagents(id);
         setSubagentCharacters((prev) => prev.filter((s) => s.parentAgentId !== id));
         os.removeAgent(id);
+        os.agentSources.delete(id);
       } else if (msg.type === 'existingAgents') {
         const incoming = msg.agents as number[];
         const meta = (msg.agentMeta || {}) as Record<number, ExistingAgentMeta>;
         const directoryNames = (msg.directoryNames || {}) as Record<number, string>;
         const externalAgents = (msg.externalAgents || {}) as Record<number, boolean>;
+        const sourceLabels = (msg.sourceLabels || {}) as Record<number, string>;
+        const sourceKinds = (msg.sourceKinds || {}) as Record<number, 'computer' | 'cloud'>;
         const headlessAgents: Record<number, boolean> = {};
         for (const id of incoming) {
           noteDirectoryName(directoryNames[id]);
           if (isHeadlessAgent(externalAgents[id])) headlessAgents[id] = true;
+          if (sourceLabels[id] && sourceKinds[id]) {
+            os.agentSources.set(id, { label: sourceLabels[id], kind: sourceKinds[id] });
+          }
         }
         // Order-independent restore: add agents now if the layout (and its seats)
         // is already built, otherwise buffer them for the next layoutLoaded.

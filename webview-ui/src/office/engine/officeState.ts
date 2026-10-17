@@ -86,6 +86,9 @@ export class OfficeState {
   subagentIdMap: Map<string, number> = new Map();
   /** Reverse lookup: sub-agent character ID → parent info */
   subagentMeta: Map<number, { parentAgentId: number; parentToolId: string }> = new Map();
+  /** Agent ID → where a relayed remote session runs. Local agents are absent.
+   *  Kept outside `characters` so it survives existingAgents buffering. */
+  agentSources: Map<number, { label: string; kind: 'computer' | 'cloud' }> = new Map();
   private nextSubagentId = -1;
 
   /**
