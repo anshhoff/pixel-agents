@@ -5,6 +5,7 @@ import * as path from 'path';
 
 import {
   HOOK_API_PREFIX,
+  MAX_HOOK_BODY_SIZE,
   SERVER_JSON_DIR,
   SERVER_JSON_NAME,
   SERVERS_DIR,
@@ -37,6 +38,119 @@ function hookDebug(line: string): void {
   } catch {
     /* never let diagnostics break the hook */
   }
+}
+
+// ── Payload size ──────────────────────────────────────────────────────────
+//
+// The server rejects a body over MAX_HOOK_BODY_SIZE (64 KB) with 413, and a
+// rejected event is lost: a tool row that never finishes, a push or PR the
+// progress tracker never sees. Claude Code's payloads routinely exceed that:
+// PostToolUse carries the tool's whole output (a large Read, long Bash output)
+// and PreToolUse its whole input (a Write's content, an Edit's strings). So the
+// payload is cut down before it is posted, keeping what the server reads.
+
+/** Body budget: the server's limit less headroom. */
+const MAX_BODY_BYTES = MAX_HOOK_BODY_SIZE - 4 * 1024; // 60 KB
+/** tool_response: the server only searches it for the PR url `gh pr create`
+ *  prints, so a few KB of text is all it needs. */
+const MAX_RESPONSE_CHARS = 4 * 1024;
+/** Of MAX_RESPONSE_CHARS, how much comes from the END of the output, where a
+ *  chained `… && gh pr create` prints its url. The rest is the start. */
+const RESPONSE_TAIL_CHARS = 1024;
+/** Any one string in tool_input (or, as a last resort, elsewhere). Keys like
+ *  file_path, command, pattern and url stay whole unless longer than this. */
+const MAX_INPUT_STRING_CHARS = 2 * 1024;
+/** Nesting walked inside tool_input; a deeper value too big to keep whole
+ *  becomes truncated JSON text. */
+const MAX_INPUT_DEPTH = 8;
+const MAX_INPUT_ARRAY_ITEMS = 100;
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+function cutMarker(chars: number): string {
+  return `…[${chars} chars truncated]…`;
+}
+
+/** The first `cap` chars of `text` (never half a surrogate pair), and a marker. */
+function clipHead(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const end = isHighSurrogate(text.charCodeAt(cap - 1)) ? cap - 1 : cap;
+  return text.slice(0, end) + cutMarker(text.length - end);
+}
+
+/** The start and the last `tail` chars of `text`, `cap` chars in all, with a
+ *  marker between them. */
+function clipHeadAndTail(text: string, cap: number, tail: number): string {
+  if (text.length <= cap) return text;
+  let end = cap - tail;
+  if (isHighSurrogate(text.charCodeAt(end - 1))) end--;
+  let start = text.length - tail;
+  if (isLowSurrogate(text.charCodeAt(start))) start++;
+  return text.slice(0, end) + cutMarker(start - end) + text.slice(start);
+}
+
+/** tool_response unchanged when its text fits MAX_RESPONSE_CHARS, else that
+ *  text (the string, or the value as JSON) cut to MAX_RESPONSE_CHARS. */
+function shrinkResponse(response: unknown): unknown {
+  const text = typeof response === 'string' ? response : JSON.stringify(response);
+  if (text === undefined || text.length <= MAX_RESPONSE_CHARS) return response;
+  return clipHeadAndTail(text, MAX_RESPONSE_CHARS, RESPONSE_TAIL_CHARS);
+}
+
+/** A copy of `value` with every string over MAX_INPUT_STRING_CHARS cut down
+ *  (head only: a command's tail without its start can parse as a different
+ *  command), arrays capped at MAX_INPUT_ARRAY_ITEMS and nesting at
+ *  MAX_INPUT_DEPTH. Values within those bounds are kept as they are. */
+function shrinkValue(value: unknown, depth: number): unknown {
+  if (typeof value === 'string') return clipHead(value, MAX_INPUT_STRING_CHARS);
+  if (value === null || typeof value !== 'object') return value;
+  if (depth >= MAX_INPUT_DEPTH) {
+    const text = JSON.stringify(value);
+    return text.length <= MAX_INPUT_STRING_CHARS ? value : clipHead(text, MAX_INPUT_STRING_CHARS);
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, MAX_INPUT_ARRAY_ITEMS).map((item) => shrinkValue(item, depth + 1));
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, shrinkValue(item, depth + 1)]),
+  );
+}
+
+function fitsInBody(payload: Record<string, unknown>): boolean {
+  return Buffer.byteLength(JSON.stringify(payload)) <= MAX_BODY_BYTES;
+}
+
+/**
+ * The hook payload to POST, cut down to fit the server's body limit while
+ * keeping what the server reads. Pure: `data` is not modified.
+ *  1. tool_response becomes at most MAX_RESPONSE_CHARS of text (its start and
+ *     end), and each long string in tool_input is cut to its start. Every
+ *     other field is untouched, and a payload already within these bounds
+ *     comes back unchanged.
+ *  2. Still too big (an input of very many strings): tool_input and
+ *     tool_response are dropped. Delivering the event matters more.
+ *  3. Still too big: another field no consumer reads (a failed tool's error
+ *     output, say) is oversized, so every long string left is cut too.
+ */
+export function shrinkHookPayload(data: Record<string, unknown>): Record<string, unknown> {
+  const payload = { ...data };
+  if (payload.tool_response !== undefined) {
+    payload.tool_response = shrinkResponse(payload.tool_response);
+  }
+  if (payload.tool_input !== undefined) payload.tool_input = shrinkValue(payload.tool_input, 1);
+  if (fitsInBody(payload)) return payload;
+
+  delete payload.tool_response;
+  delete payload.tool_input;
+  if (fitsInBody(payload)) return payload;
+
+  return shrinkValue(payload, 0) as Record<string, unknown>;
 }
 
 /** True if a process with this PID is alive. Best-effort: a false positive on
@@ -189,10 +303,19 @@ async function main(): Promise<void> {
     if (withDebugLog?.debugLog) debugLogPath = withDebugLog.debugLog;
   }
 
-  const body = JSON.stringify(data);
+  const body = JSON.stringify(shrinkHookPayload(data));
+  if (Buffer.byteLength(input) > MAX_BODY_BYTES) {
+    hookDebug(
+      `shrunk event=${eventName} sid=${sid} bytes=${Buffer.byteLength(input)}->${Buffer.byteLength(body)}`,
+    );
+  }
   await Promise.all(servers.map((server) => postToServer(server, body, eventName, sid)));
 }
 
-main()
-  .catch(() => {})
-  .finally(() => process.exit(0));
+// Run only as the hook script itself (the bundled CJS entry), not when a test
+// imports this module for shrinkHookPayload.
+if (require.main === module) {
+  main()
+    .catch(() => {})
+    .finally(() => process.exit(0));
+}
