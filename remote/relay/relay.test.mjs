@@ -14,10 +14,47 @@ import {
   loadConfig,
   MAX_BODY_BYTES,
   removeSource,
+  SENDER_EVENTS,
+  senderHooks,
   transformEvent,
 } from './relay.mjs';
 
 const LAPTOP = { id: 'laptop', label: 'Laptop', kind: 'computer' };
+const URL_ = 'https://desk.tail1234.ts.net/ingest';
+
+describe('senderHooks', () => {
+  it('installs one async hook per event Pixel Agents listens to', () => {
+    const hooks = senderHooks({ url: URL_, cloud: false });
+    assert.deepEqual(Object.keys(hooks).sort(), [...SENDER_EVENTS].sort());
+    for (const event of SENDER_EVENTS) {
+      const [entry] = hooks[event];
+      assert.equal(entry.hooks.length, 1);
+      assert.equal(entry.hooks[0].type, 'command');
+      assert.equal(entry.hooks[0].async, true);
+      assert.ok(entry.hooks[0].command.includes(URL_));
+    }
+  });
+
+  it('a computer sender reads its key from ~/.pixel-agents/ingest-key and always runs', () => {
+    const { command } = senderHooks({ url: URL_, cloud: false }).Stop[0].hooks[0];
+    assert.ok(command.includes('Authorization: Bearer $(cat ~/.pixel-agents/ingest-key)'));
+    assert.equal(command.includes('CLAUDE_CODE_REMOTE'), false);
+  });
+
+  it('a cloud sender carries no key and is a no-op outside cloud sessions', () => {
+    const { command } = senderHooks({ url: URL_, cloud: true }).Stop[0].hooks[0];
+    assert.equal(command.includes('Authorization'), false);
+    assert.ok(command.startsWith('[ "$CLAUDE_CODE_REMOTE" = "true" ] || exit 0;'));
+  });
+
+  it('rejects URLs that are not plain https', () => {
+    assert.throws(() => senderHooks({ url: 'http://desk.ts.net/ingest', cloud: true }));
+    assert.throws(() =>
+      senderHooks({ url: "https://desk.ts.net/ingest'; rm -rf ~; '", cloud: true }),
+    );
+    assert.throws(() => senderHooks({ url: 'not a url', cloud: true }));
+  });
+});
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-relay-test-'));

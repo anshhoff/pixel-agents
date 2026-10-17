@@ -260,6 +260,57 @@ export function createRelayServer({ getConfig, forward, maxBodyBytes = MAX_BODY_
   return server;
 }
 
+// ── Senders ─────────────────────────────────────────────────────────────────
+
+/** The events Pixel Agents installs locally (server/src/providers/hook/claude/constants.ts). */
+export const SENDER_EVENTS = [
+  'SessionStart',
+  'SessionEnd',
+  'Stop',
+  'PermissionRequest',
+  'Notification',
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'SubagentStart',
+  'SubagentStop',
+  'TeammateIdle',
+  'TaskCompleted',
+];
+
+/**
+ * The settings.json `hooks` block that sends a machine's events to the relay.
+ * Every hook is async, so a session never waits on the network.
+ * - computer: user-level settings; the key is read from ~/.pixel-agents/ingest-key.
+ * - cloud: committed to a repo's .claude/settings.json; exits at once unless
+ *   CLAUDE_CODE_REMOTE=true, and carries no key -- the cloud environment's
+ *   network secret adds the Authorization header on the way out.
+ */
+export function senderHooks({ url, cloud }) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`invalid URL "${url}"`);
+  }
+  if (parsed.protocol !== 'https:' || /['"\s\\`$]/.test(url)) {
+    throw new Error('the ingest URL must be a plain https:// URL');
+  }
+  const auth = cloud ? '' : ` -H "Authorization: Bearer $(cat ~/.pixel-agents/ingest-key)"`;
+  const post =
+    `curl -s -m 5 -X POST -H 'Content-Type: application/json'${auth}` +
+    ` --data-binary @- '${url}' >/dev/null 2>&1`;
+  const command = cloud
+    ? `[ "$CLAUDE_CODE_REMOTE" = "true" ] || exit 0; ${post}; exit 0`
+    : `${post}; exit 0`;
+  return Object.fromEntries(
+    SENDER_EVENTS.map((event) => [
+      event,
+      [{ matcher: '', hooks: [{ type: 'command', command, async: true, timeout: 10 }] }],
+    ]),
+  );
+}
+
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
 /** loadConfig, re-read only when relay.json changes, so revoking a key needs no restart. */
@@ -327,12 +378,18 @@ function main(argv) {
       for (const s of loadConfig(home).sources) console.log(`${s.id}\t${s.kind}\t${s.label}`);
       return;
     }
+    case 'sender-config': {
+      const hooks = senderHooks({ url: flag(args, 'url'), cloud: args.includes('--cloud') });
+      console.log(JSON.stringify({ hooks }, null, 2));
+      return;
+    }
     default:
       console.log(
         'Usage: relay.mjs serve [--port N]\n' +
           '       relay.mjs add-source <id> --kind computer|cloud [--label L]\n' +
           '       relay.mjs remove-source <id>\n' +
-          '       relay.mjs list',
+          '       relay.mjs list\n' +
+          '       relay.mjs sender-config --url https://<host>/ingest [--cloud]',
       );
       process.exitCode = command ? 1 : 0;
   }
