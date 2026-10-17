@@ -130,6 +130,46 @@ function request(port, { method = 'POST', path: p = '/ingest', headers = {}, bod
 }
 
 describe('transformEvent', () => {
+  const prCreated = (overrides = {}) => ({
+    session_id: 'abc',
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'gh pr create --title "Fix hero image" --fill' },
+    tool_response: {
+      stdout: 'Creating pull request...\nhttps://github.com/anshhoff/hobbyfi-web/pull/12\n',
+    },
+    ...overrides,
+  });
+
+  it('keeps only the PR url from a successful gh pr create', () => {
+    const out = transformEvent(prCreated(), LAPTOP);
+    assert.equal(out.pr_url, 'https://github.com/anshhoff/hobbyfi-web/pull/12');
+    assert.equal('tool_response' in out, false);
+  });
+
+  it('finds the PR url in a PowerShell tool response too', () => {
+    const out = transformEvent(
+      prCreated({
+        tool_name: 'PowerShell',
+        tool_response: { output: 'https://github.com/o/r/pull/7' },
+      }),
+      LAPTOP,
+    );
+    assert.equal(out.pr_url, 'https://github.com/o/r/pull/7');
+  });
+
+  it('sets no pr_url for other commands, failures, or forged fields', () => {
+    const other = transformEvent(prCreated({ tool_input: { command: 'gh pr view 12' } }), LAPTOP);
+    assert.equal('pr_url' in other, false);
+    const failed = transformEvent(prCreated({ hook_event_name: 'PostToolUseFailure' }), LAPTOP);
+    assert.equal('pr_url' in failed, false);
+    const forged = transformEvent(
+      { session_id: 'abc', hook_event_name: 'Stop', pr_url: 'https://evil.example/pull/1' },
+      LAPTOP,
+    );
+    assert.equal('pr_url' in forged, false);
+  });
+
   it('rejects events without session_id or hook_event_name', () => {
     assert.equal(transformEvent({ hook_event_name: 'Stop' }, LAPTOP), null);
     assert.equal(transformEvent({ session_id: 'abc' }, LAPTOP), null);

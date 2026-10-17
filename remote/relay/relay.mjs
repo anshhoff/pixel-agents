@@ -22,7 +22,10 @@ const SOURCE_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const SOURCE_KINDS = new Set(['computer', 'cloud']);
 const INGEST_PATHS = new Set(['/', '/ingest']);
 // Fields that point at files on the sender's machine or carry bulky tool output.
-const DROPPED_FIELDS = ['transcript_path', 'agent_transcript_path', 'tool_response'];
+// pr_url is only ever set by the relay itself (see prUrlOf).
+const DROPPED_FIELDS = ['transcript_path', 'agent_transcript_path', 'tool_response', 'pr_url'];
+const PR_CREATE = /\bgh\s+pr\s+create\b/;
+const GITHUB_PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -121,10 +124,25 @@ export function transformEvent(raw, source) {
   if (typeof raw.hook_event_name !== 'string' || !raw.hook_event_name) return null;
   const event = { ...raw };
   for (const field of DROPPED_FIELDS) delete event[field];
+  const prUrl = prUrlOf(raw);
+  if (prUrl) event.pr_url = prUrl;
   if (event.tool_input !== undefined) event.tool_input = truncateStrings(event.tool_input, 0);
   event.session_id = `${source.id}:${raw.session_id}`;
   event.pixel_source = { id: source.id, label: source.label, kind: source.kind };
   return event;
+}
+
+/**
+ * The PR a successful `gh pr create` opened, read from the tool output before
+ * that output is dropped, so remote PRs still become trophies on the board.
+ */
+function prUrlOf(raw) {
+  if (raw.hook_event_name !== 'PostToolUse') return undefined;
+  const command = raw.tool_input?.command;
+  if (typeof command !== 'string' || !PR_CREATE.test(command)) return undefined;
+  const text =
+    typeof raw.tool_response === 'string' ? raw.tool_response : JSON.stringify(raw.tool_response);
+  return text?.match(GITHUB_PR_URL)?.[0];
 }
 
 // ── Forwarding ──────────────────────────────────────────────────────────────
