@@ -245,8 +245,10 @@ async function main(): Promise<void> {
     : PtySessionManager.disabled(TERMINAL_DISABLED_BY_FLAG_REASON);
 
   try {
-    // Create runtime first (before server.start, so we can pass it in)
-    const runtime = new AgentRuntime(store, claudeProvider);
+    // Create runtime first (before server.start, so we can pass it in). With
+    // manager: {} the Manager's task log and reports live under ~/.pixel-agents
+    // (standalone only; the VS Code adapter keeps its task log in memory).
+    const runtime = new AgentRuntime(store, claudeProvider, { manager: {} });
 
     // Wire hook events: HTTP POST -> runtime -> hookEventHandler -> agents
     server.onHookEvent((providerId, event) => {
@@ -414,6 +416,12 @@ async function main(): Promise<void> {
         `[Pixel Agents] Session list off (${LOCAL_SESSIONS_ENABLED_ENV}): idle open sessions are not adopted.`,
       );
     }
+    // ntfy phone alerts for agents left waiting on the user (standalone only;
+    // off until ~/.pixel-agents/alerts.json names a topic).
+    runtime.startPhoneAlerts();
+    // The Manager's 19:00 daily report (standalone only). PIXEL_AGENTS_MANAGER=off
+    // keeps claude from ever being run for it.
+    runtime.startManagerReports();
 
     // The URL the operator opens has to be REACHABLE (a wildcard bind address
     // is a bind target, not an address you can browse to — `--host 0.0.0.0`

@@ -51,6 +51,7 @@ import type { SubagentWatch } from './subagentWatch.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
 import { cwdFromTranscript } from './transcriptCwd.js';
 import { getHookProvider, processTranscriptLine } from './transcriptParser.js';
+import { readLatestAiTitle, seedAgentTitle } from './transcriptTitle.js';
 import type { AgentState } from './types.js';
 
 /** Dismissal tracker instance. Set once at startup via setDismissalTracker().
@@ -112,9 +113,10 @@ export function startFileWatching(
   permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
 ): void {
   // Every watched agent passes through here, so this is the one place that can
-  // give an agent adopted or restored mid-session a context gauge without
-  // replaying its whole transcript.
+  // give an agent adopted or restored mid-session a context gauge (and its task
+  // title) without replaying its whole transcript.
   seedContextUsage(agentId, agents, getHookProvider());
+  seedAgentTitle(agentId, agents);
 
   // Single polling approach: reliable on all platforms (macOS, Linux, WSL2, Windows).
   // Previously used triple-redundant fs.watch + fs.watchFile + setInterval, but
@@ -1180,6 +1182,8 @@ function adoptExternalSession(
     fileOffset,
     lastDataAt: Date.now(),
     directoryName,
+    // Read before the agent is announced, so agentCreated carries it.
+    title: readLatestAiTitle(jsonlFile),
   });
 
   assignPaletteIfNeeded(agent, agents);

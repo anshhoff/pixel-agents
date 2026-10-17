@@ -50,3 +50,5 @@ agent-orchestrator.yaml
 .ao/
 .serena/
 tasks/
+# ...but not the Manager's task log source (server/src/tasks/).
+!/server/src/tasks/

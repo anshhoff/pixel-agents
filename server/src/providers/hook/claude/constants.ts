@@ -85,3 +85,16 @@ export const CLAUDE_SMALL_CONTEXT_WINDOW = 200_000;
  *  guessing small for a large model pins every gauge in the red, while the
  *  reverse is a quiet under-read that the runtime's widening still corrects. */
 export const CLAUDE_SMALL_CONTEXT_MODEL_PATTERN = /haiku|claude-[123]|-4-[01]\b/i;
+
+// ── MCP tool names ──────────────────────────────────────────
+//
+// Claude Code names an MCP tool `mcp__<server>__<tool>`. Plugin-provided
+// servers are `plugin_<plugin>_<server>` (usually the same word twice) and
+// claude.ai connectors `claude_ai_<Name>`.
+export const MCP_TOOL_PREFIX = 'mcp__';
+export const MCP_NAME_SEPARATOR = '__';
+export const MCP_PLUGIN_SERVER_PREFIX = 'plugin_';
+export const MCP_CLAUDE_AI_SERVER_PREFIX = 'claude_ai_';
+/** A plain lower-case server name ("playwright") reads better capitalized;
+ *  anything else ("claude-in-chrome") is shown as its owner wrote it. */
+export const MCP_PLAIN_SERVER_NAME = /^[a-z][a-z0-9]*$/;

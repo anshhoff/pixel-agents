@@ -15,6 +15,7 @@ import * as path from 'path';
 import type { HookProvider } from '../../core/src/provider.js';
 import { createAgentState } from './agentState.js';
 import type { AgentStateStore } from './agentStateStore.js';
+import { PhoneAlerts, type PhoneAlertsOptions } from './alerts.js';
 import { REMOTE_AGENT_TTL_MS, REMOTE_EXPIRY_CHECK_INTERVAL_MS } from './constants.js';
 import { DismissalTracker } from './dismissalTracker.js';
 import {
@@ -49,6 +50,13 @@ import { PathSet, pathsMatch } from './pathKey.js';
 import { ProgressTracker, type ProgressTrackerOptions } from './progress/progressTracker.js';
 import { SessionRouter } from './sessionRouter.js';
 import { SubagentWatch } from './subagentWatch.js';
+import { ManagerReports, type ManagerReportsOptions } from './tasks/managerReports.js';
+import {
+  defaultManagerDataDir,
+  getTaskLedger,
+  setTaskLedger,
+  TaskLedger,
+} from './tasks/taskLedger.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import {
   getProgressTracker,
@@ -58,6 +66,7 @@ import {
   setProgressTracker,
   setTeamSwitchCallback,
 } from './transcriptParser.js';
+import { readLatestAiTitle } from './transcriptTitle.js';
 import type { AgentState } from './types.js';
 
 /** Callbacks that adapters register for platform-specific behavior. */
@@ -75,6 +84,15 @@ export interface AgentRuntimeOptions {
   /** Session list, clock and home dir for the LocalSessionWatcher (tests).
    *  Default: `claude agents --json`, Date.now, os.homedir. */
   localSessions?: LocalSessionWatcherOptions;
+  /** Config file, fetch and clock for the phone alerts (tests). Default:
+   *  ~/.pixel-agents/alerts.json, global fetch, Date.now. */
+  alerts?: PhoneAlertsOptions;
+  /** The Manager's task log and daily reports (tasks/). Present: both live
+   *  under `dataDir` (default ~/.pixel-agents) -- the standalone CLI passes {}.
+   *  Absent: the task log is kept in memory and no report is written, which is
+   *  what the VS Code adapter gets: two surfaces writing one day's task file
+   *  would clobber each other's tasks. Clock, claude runner and env: tests. */
+  manager?: Omit<ManagerReportsOptions, 'dataDir'> & { dataDir?: string };
 }
 
 export class AgentRuntime {
@@ -108,6 +126,14 @@ export class AgentRuntime {
   /** Keeps every open local session on the board and puts idle ones to sleep
    *  (see localSessions.ts). Polls only once started -- the standalone CLI does. */
   readonly localSessions: LocalSessionWatcher;
+  /** ntfy phone alerts for agents left waiting on the user (see alerts.ts).
+   *  Checks only once started -- the standalone CLI does. */
+  readonly alerts: PhoneAlerts;
+  /** The Manager's task log: one task per session title period (tasks/taskLedger.ts). */
+  readonly tasks: TaskLedger;
+  /** The Manager's daily report (tasks/managerReports.ts). Scheduled only once
+   *  started -- the standalone CLI does. */
+  readonly reports: ManagerReports;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
 
@@ -133,6 +159,18 @@ export class AgentRuntime {
       options.localSessions,
     );
     setLocalSessionWatcher(this.localSessions);
+    this.alerts = new PhoneAlerts(store, this.progress, options.alerts);
+    const { manager } = options;
+    const managerDataDir = manager ? (manager.dataDir ?? defaultManagerDataDir()) : null;
+    this.tasks = new TaskLedger(store, this.progress, {
+      dataDir: managerDataDir,
+      now: manager?.now,
+    });
+    setTaskLedger(this.tasks);
+    this.reports = new ManagerReports(store, this.tasks, this.alerts, {
+      ...manager,
+      dataDir: managerDataDir,
+    });
 
     // Wire module-level dependencies
     setDismissalTracker(this.dismissalTracker);
@@ -221,7 +259,12 @@ export class AgentRuntime {
           );
           return;
         }
+        const before = new Set(this.store.keys());
         this.adoptLocalSession(sessionId, transcriptPath, cwd, false);
+        // A hook-adopted session the session list never shows is headless.
+        for (const id of this.store.keys()) {
+          if (!before.has(id)) this.localSessions.noteHookAdoption(id);
+        }
       },
       onSessionClear: (agentId, newSessionId, newTranscriptPath) => {
         if (newTranscriptPath) {
@@ -424,6 +467,16 @@ export class AgentRuntime {
 
   stopLocalSessionWatch(): void {
     this.localSessions.stop();
+  }
+
+  /** Start the phone alerts (standalone only); off until alerts.json exists. */
+  startPhoneAlerts(): void {
+    this.alerts.start();
+  }
+
+  /** Start the Manager's 19:00 daily report (standalone only). */
+  startManagerReports(): void {
+    this.reports.start();
   }
 
   // ── Agent removal (shared cleanup) ──
@@ -658,6 +711,8 @@ export class AgentRuntime {
         teamUsesTmux: p.teamUsesTmux,
         palette: p.palette,
         hueShift: p.hueShift,
+        // Read before the agent is announced, so agentCreated carries it.
+        title: readLatestAiTitle(p.jsonlFile),
       });
 
       assignPaletteIfNeeded(agent, this.store);
@@ -702,6 +757,11 @@ export class AgentRuntime {
     // First, so the removals below are not read as dismissals of open sessions.
     this.localSessions.dispose();
     if (getLocalSessionWatcher() === this.localSessions) setLocalSessionWatcher(null);
+    // Also before the removals: shutting down ends no session, so it closes no task.
+    this.reports.dispose();
+    this.tasks.dispose();
+    if (getTaskLedger() === this.tasks) setTaskLedger(null);
+    this.alerts.dispose();
     this.hookEventHandler.dispose();
     this.subagentWatch.dispose();
     this.progress.dispose();

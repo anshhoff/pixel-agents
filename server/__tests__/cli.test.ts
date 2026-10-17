@@ -208,12 +208,13 @@ describe('dist/cli.js entry-point guard', () => {
     const port = await getFreePort();
     const child = spawn(process.execPath, [CLI_BUNDLE, '--port', port.toString(), '--host', host], {
       cwd: workspaceDir,
-      // Session list off: it would run the real `claude agents --json`.
+      // Session list and Manager reports off: they would run the real `claude`.
       env: {
         ...process.env,
         HOME: tmpHome,
         USERPROFILE: tmpHome,
         PIXEL_AGENTS_SESSION_LIST: 'off',
+        PIXEL_AGENTS_MANAGER: 'off',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -433,6 +434,7 @@ describe('dist/cli.js entry-point guard', () => {
           HOME: tmpHome,
           USERPROFILE: tmpHome,
           PIXEL_AGENTS_SESSION_LIST: 'off',
+          PIXEL_AGENTS_MANAGER: 'off',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       },

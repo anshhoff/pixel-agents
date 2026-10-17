@@ -19,9 +19,21 @@
  *    is older than SLEEP_AFTER_MS. `agentSleep` is broadcast on change only; an
  *    `agentStatus` active broadcast wakes it at once.
  *
+ *  - An agent is background (a compact remote-worker tile, not a character)
+ *    while its session is listed with a kind other than `interactive`; a listed
+ *    session with no kind is interactive. A local session adopted from its
+ *    hooks that no successful listing shows within HEADLESS_SESSION_GRACE_MS of
+ *    its adoption is headless (`claude -p`, a routine): background too, until
+ *    the list shows it. Known at adoption, the flag rides on agentCreated;
+ *    later changes are broadcast as `agentKind`. Teammates belong to their team
+ *    and are never reclassified.
+ *
  * A failed listing (claude not installed, bad output, timeout) is no news: it
  * changes nothing, is logged once per failure streak, and polling goes on.
- * Remote (relay) agents are never adopted over, put to sleep, or removed.
+ * With the list off (PIXEL_AGENTS_SESSION_LIST, or the VS Code adapter, which
+ * never starts the watcher) nothing is ever background.
+ * Remote (relay) agents are never adopted over, put to sleep, removed, or
+ * made background.
  */
 
 import { execFile } from 'child_process';
@@ -29,14 +41,16 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import type { AgentSleep } from '../../core/src/messages.js';
+import type { AgentKind, AgentSleep } from '../../core/src/messages.js';
 import { normalizeProjectPath } from '../../core/src/normalizeProjectPath.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import {
+  HEADLESS_SESSION_GRACE_MS,
   LOCAL_SESSIONS_BIN_ENV,
   LOCAL_SESSIONS_BIN_POSIX,
   LOCAL_SESSIONS_BIN_WIN32,
   LOCAL_SESSIONS_ENABLED_ENV,
+  LOCAL_SESSIONS_INTERACTIVE_KIND,
   LOCAL_SESSIONS_LIST_ARGS,
   LOCAL_SESSIONS_LIST_MAX_BUFFER,
   LOCAL_SESSIONS_LIST_TIMEOUT_MS,
@@ -192,10 +206,12 @@ export class LocalSessionWatcher {
   private readonly perAgent = new Map<number, AgentWatch>();
   /** Every board agent by id, so a removal can still name its session. */
   private readonly known = new Map<number, AgentState>();
-  /** Session ids in the last successful listing. */
-  private listed = new Set<string>();
+  /** The last successful listing, by session id. */
+  private listed = new Map<string, LocalSession>();
   /** Listed sessions whose agent left the board other than by this watcher. */
   private readonly released = new Set<string>();
+  /** Hook-adopted local agents no listing has shown yet: id -> when adopted. */
+  private readonly awaitingListing = new Map<number, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private polling = false;
   private disposed = false;
@@ -240,6 +256,16 @@ export class LocalSessionWatcher {
     this.store.off('agentRemoved', this.onAgentRemoved);
     this.perAgent.clear();
     this.known.clear();
+    this.awaitingListing.clear();
+  }
+
+  /** A local session was just adopted from its hooks: unless a listing shows it
+   *  within HEADLESS_SESSION_GRACE_MS, it is headless (see updateKinds). */
+  noteHookAdoption(agentId: number): void {
+    const agent = this.store.get(agentId);
+    if (this.disposed || !agent || !kindApplies(agent)) return;
+    if (this.listed.has(agent.sessionId)) return; // listed: its kind decides
+    this.awaitingListing.set(agentId, this.now());
   }
 
   /** Is this the watcher for that store? (agentActivityResend finds it module-wide.) */
@@ -293,7 +319,8 @@ export class LocalSessionWatcher {
     for (const session of sessions) {
       if (!bySession.has(session.sessionId)) bySession.set(session.sessionId, session);
     }
-    this.listed = new Set(bySession.keys());
+    // Before adopting: onAgentAdded reads it to announce a background kind.
+    this.listed = bySession;
     for (const sessionId of this.released) {
       if (!bySession.has(sessionId)) this.released.delete(sessionId);
     }
@@ -301,6 +328,7 @@ export class LocalSessionWatcher {
 
     this.removeEnded(bySession);
     this.adoptListed(bySession);
+    this.updateKinds(bySession);
     this.updateSleep(bySession);
   }
 
@@ -356,6 +384,38 @@ export class LocalSessionWatcher {
         `[Pixel Agents] Session list: adopted open session(s) as Agent ${adopted.join(', ')}`,
       );
     }
+  }
+
+  /** Background or interactive: the listed kind decides while a session is
+   *  listed; a hook-adopted one still unlisted after the grace is headless. */
+  private updateKinds(bySession: Map<string, LocalSession>): void {
+    const now = this.now();
+    for (const [id, agent] of this.store) {
+      if (!kindApplies(agent)) {
+        this.awaitingListing.delete(id);
+        continue;
+      }
+      const session = bySession.get(agent.sessionId);
+      if (session) {
+        this.awaitingListing.delete(id);
+        this.setBackground(id, agent, isBackgroundKind(session.kind));
+        continue;
+      }
+      const adoptedAt = this.awaitingListing.get(id);
+      if (adoptedAt !== undefined && now - adoptedAt >= HEADLESS_SESSION_GRACE_MS) {
+        this.awaitingListing.delete(id);
+        console.log(
+          `[Pixel Agents] Session list: Agent ${id} - session ${agent.sessionId.slice(0, 8)}... never listed, treating it as headless`,
+        );
+        this.setBackground(id, agent, true);
+      }
+    }
+  }
+
+  private setBackground(id: number, agent: AgentState, background: boolean): void {
+    if ((agent.background === true) === background) return;
+    agent.background = background ? true : undefined;
+    this.store.broadcast({ type: 'agentKind', id, background } satisfies AgentKind);
   }
 
   private updateSleep(bySession: Map<string, LocalSession>): void {
@@ -458,20 +518,39 @@ export class LocalSessionWatcher {
     this.setSleeping(id, false, 0);
   };
 
+  /** A new agent whose session the last listing names with a background kind
+   *  is background from the start, so its agentCreated says so. This listener
+   *  is registered when the runtime is built -- before any client's -- so it
+   *  runs before the agentCreated broadcast reads the agent. */
   private readonly onAgentAdded = (id: number, agent: AgentState): void => {
     this.known.set(id, agent);
+    if (this.disposed || !kindApplies(agent)) return;
+    if (isBackgroundKind(this.listed.get(agent.sessionId)?.kind)) agent.background = true;
   };
 
   private readonly onAgentRemoved = (id: number): void => {
     const agent = this.known.get(id);
     this.known.delete(id);
     this.perAgent.delete(id);
+    this.awaitingListing.delete(id);
     // Dismissed (or ended by a hook) while its session is still open. The
     // dismissal tracker forgets after a few minutes; this list would re-adopt.
     if (agent && !agent.remoteSource && this.listed.has(agent.sessionId)) {
       this.released.add(agent.sessionId);
     }
   };
+}
+
+/** Does the background/interactive distinction apply? Not to remote agents
+ *  (always full characters) nor to teammates and background-spawn children
+ *  (their team decides how they are drawn). */
+function kindApplies(agent: AgentState): boolean {
+  return !agent.remoteSource && agent.leadAgentId === undefined && !agent.spawnToolUseId;
+}
+
+/** A listed kind other than interactive. No kind (an older CLI) is interactive. */
+function isBackgroundKind(kind: string | undefined): boolean {
+  return kind !== undefined && kind !== LOCAL_SESSIONS_INTERACTIVE_KIND;
 }
 
 function isFile(file: string): boolean {

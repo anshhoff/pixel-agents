@@ -43,6 +43,14 @@ export interface AgentState {
    *  (localSessions.ts). Only such agents are removed when their session leaves
    *  the list. Transient — not persisted. */
   fromSessionList?: true;
+  /** The session's task title: the newest `ai-title` record in its transcript
+   *  (transcriptTitle.ts). Remote agents have no transcript here, so none. */
+  title?: string;
+  /** A background or headless local session -- the session list names a kind
+   *  other than interactive, or a hook-adopted session never appears in it
+   *  (localSessions.ts). Shown as a compact remote-worker tile. Remote agents
+   *  never are. Transient -- not persisted. */
+  background?: true;
   /** Set when SessionEnd(reason=clear) fires; cleared when SessionStart(source=clear) reassigns */
   pendingClear?: boolean;
   /** Hook-generated tool ID for PreToolUse/PostToolUse correlation */

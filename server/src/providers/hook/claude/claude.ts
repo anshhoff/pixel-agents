@@ -6,6 +6,7 @@ import { normalizeProjectPath } from '../../../../../core/src/normalizeProjectPa
 import type { AgentEvent, HookProvider } from '../../../../../core/src/provider.js';
 import {
   BASH_COMMAND_DISPLAY_MAX_LENGTH,
+  MCP_TOOL_STATUS_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
 } from '../../../constants.js';
 import {
@@ -20,6 +21,11 @@ import {
   CLAUDE_SMALL_CONTEXT_MODEL_PATTERN,
   CLAUDE_SMALL_CONTEXT_WINDOW,
   CLAUDE_TERMINAL_NAME_PREFIX,
+  MCP_CLAUDE_AI_SERVER_PREFIX,
+  MCP_NAME_SEPARATOR,
+  MCP_PLAIN_SERVER_NAME,
+  MCP_PLUGIN_SERVER_PREFIX,
+  MCP_TOOL_PREFIX,
 } from './constants.js';
 
 // ── formatToolStatus: moved from src/transcriptParser.ts ──
@@ -68,8 +74,50 @@ export function formatToolStatus(toolName: string, input?: unknown): string {
       return recipient ? `-> ${recipient}` : 'Sending message';
     }
     default:
-      return `Using ${toolName}`;
+      return mcpToolStatus(toolName) ?? `Using ${toolName}`;
   }
+}
+
+// ── MCP tool names ──
+//
+// The status line names the server once and spells the tool out:
+// `mcp__plugin_playwright_playwright__browser_run_code_unsafe` -> "Using
+// Playwright: browser run code unsafe" (name shapes: see constants.ts).
+
+/** The status line for an MCP tool, or undefined when the name isn't one. */
+function mcpToolStatus(toolName: string): string | undefined {
+  if (!toolName.startsWith(MCP_TOOL_PREFIX)) return undefined;
+  const parts = toolName.slice(MCP_TOOL_PREFIX.length).split(MCP_NAME_SEPARATOR);
+  if (parts.length < 2) return undefined;
+  const tool = parts.pop()!.split('_').filter(Boolean).join(' ');
+  const server = mcpServerLabel(parts.join(MCP_NAME_SEPARATOR));
+  if (!tool || !server) return undefined;
+  const status = `Using ${server}: ${tool}`;
+  return status.length > MCP_TOOL_STATUS_MAX_LENGTH
+    ? status.slice(0, MCP_TOOL_STATUS_MAX_LENGTH - 1).trimEnd() + '…'
+    : status;
+}
+
+function mcpServerLabel(raw: string): string {
+  let name = raw;
+  if (name.startsWith(MCP_PLUGIN_SERVER_PREFIX)) {
+    name = pluginServerName(name.slice(MCP_PLUGIN_SERVER_PREFIX.length));
+  } else if (name.startsWith(MCP_CLAUDE_AI_SERVER_PREFIX)) {
+    name = name.slice(MCP_CLAUDE_AI_SERVER_PREFIX.length).split('_').filter(Boolean).join(' ');
+  }
+  return MCP_PLAIN_SERVER_NAME.test(name) ? name[0].toUpperCase() + name.slice(1) : name;
+}
+
+/** `<plugin>_<server>` -> the server: `playwright_playwright` -> `playwright`,
+ *  `pm-skills_atlassian` -> `atlassian`. */
+function pluginServerName(rest: string): string {
+  const half = (rest.length - 1) / 2;
+  if (Number.isInteger(half) && half > 0 && rest[half] === '_') {
+    const first = rest.slice(0, half);
+    if (first === rest.slice(half + 1)) return first;
+  }
+  const split = rest.indexOf('_');
+  return split > 0 && split < rest.length - 1 ? rest.slice(split + 1) : rest;
 }
 
 // ── Session dir + launch command ──

@@ -12,7 +12,7 @@ import {
   PROGRESS_CYCLE_GAP_MS,
   REMOTE_AGENT_TTL_MS,
 } from '../src/constants.js';
-import { ProgressTracker } from '../src/progress/progressTracker.js';
+import { type ProgressEvent, ProgressTracker } from '../src/progress/progressTracker.js';
 import { claudeProvider } from '../src/providers/hook/claude/claude.js';
 import { processTranscriptLine } from '../src/transcriptParser.js';
 import type { AgentState } from '../src/types.js';
@@ -440,6 +440,88 @@ describe('ProgressTracker', () => {
       bash('npm test');
       tracker.dispose();
       expect(fs.readdirSync(dir)).toEqual([]);
+    });
+  });
+
+  describe('observers', () => {
+    // What the tracker counted, as it counted it: the Manager's task log
+    // (tasks/taskLedger.ts) attributes these to the agent's live task.
+    let events: ProgressEvent[];
+    let unobserve: () => void;
+
+    beforeEach(() => {
+      events = [];
+      unobserve = tracker.observe((e) => events.push(e));
+    });
+
+    it('reports each counted command, edited file, push and PR with its agent', () => {
+      addAgent(store, 2, { directoryName: 'pixel-agents' });
+      bash('npm test');
+      start('Read');
+      start('Edit', { file_path: '/work/a.ts' });
+      start('Edit', { file_path: '/work/a.ts' }, 2);
+      end('git push', {}, 2);
+      clock += MIN;
+      end('gh pr create --title "Ship it"', { response: PR_URL });
+
+      expect(events).toEqual([
+        { kind: 'command', agentId: 1, at: T0 },
+        { kind: 'fileEdited', agentId: 1, at: T0, fileKey: expect.any(String) },
+        { kind: 'fileEdited', agentId: 2, at: T0, fileKey: expect.any(String) },
+        { kind: 'push', agentId: 2, at: T0, repo: 'pixel-agents' },
+        {
+          kind: 'pr',
+          agentId: 1,
+          at: T0 + MIN,
+          pr: { title: 'Ship it', repo: 'acme/web', url: PR_URL, at: T0 + MIN },
+        },
+      ]);
+      // The same file edited by two agents is the same file: one key.
+      expect(events[1]).toMatchObject({ fileKey: (events[2] as { fileKey: string }).fileKey });
+    });
+
+    it('reports a file edit every time, even one already counted today', () => {
+      start('Edit', { file_path: '/work/a.ts' });
+      start('Edit', { file_path: '/work/a.ts' });
+      expect(events.filter((e) => e.kind === 'fileEdited')).toHaveLength(2);
+      expect(stats()).toMatchObject({ filesEdited: 1 });
+    });
+
+    it('reports nothing the totals did not count', () => {
+      end('git push', { failed: true });
+      end('gh pr create --fill', { response: PR_URL });
+      end('gh pr create --fill', { response: PR_URL });
+      tracker.onPrLink(1, { url: PR_URL });
+      expect(events.map((e) => e.kind)).toEqual(['pr']);
+    });
+
+    it('reports each closed active span, clipped at midnight like the totals', () => {
+      status(1, 'active');
+      clock += 7 * MIN;
+      status(1, 'waiting');
+      expect(events).toEqual([{ kind: 'activeTime', agentId: 1, at: T0 + 7 * MIN, ms: 7 * MIN }]);
+
+      events = [];
+      clock = new Date(2026, 9, 17, 23, 50, 0).getTime();
+      status(1, 'active');
+      clock = new Date(2026, 9, 18, 0, 5, 0).getTime();
+      status(1, 'waiting');
+      expect(events).toEqual([{ kind: 'activeTime', agentId: 1, at: clock, ms: 5 * MIN }]);
+    });
+
+    it('stops reporting once unsubscribed, and survives an observer that throws', () => {
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      tracker.observe(() => {
+        throw new Error('observer bug');
+      });
+      bash('ls');
+      expect(stats()).toMatchObject({ commandsRun: 1 });
+      expect(events).toHaveLength(1);
+      unobserve();
+      bash('ls');
+      expect(events).toHaveLength(1);
+      expect(stats()).toMatchObject({ commandsRun: 2 });
+      logged.mockRestore();
     });
   });
 

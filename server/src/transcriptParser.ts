@@ -13,6 +13,7 @@ import {
   startPermissionTimer,
   startWaitingTimer,
 } from './timerManager.js';
+import { aiTitleOf, setAgentTitle } from './transcriptTitle.js';
 import type { AgentState } from './types.js';
 
 /** Empty set used as safe fallback when no HookProvider is registered. */
@@ -550,6 +551,10 @@ export function processTranscriptLine(
           awaitingInput: false,
         });
       }
+    } else if (record.type === 'ai-title') {
+      // The session's task title, rewritten as the task takes shape: newest wins.
+      const title = aiTitleOf(record);
+      if (title) setAgentTitle(agentId, agent, agents, title);
     } else if (record.type === 'pr-link') {
       // The CLI's own note of a PR the session opened. Hook agents count PRs
       // from the gh pr create tool end instead (with its --title).

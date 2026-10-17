@@ -21,6 +21,11 @@
  * `agentStatus` broadcasts and `agentRemoved` events. Output: `agentProgress`
  * and `dailyStats` broadcasts through the store, plus snapshot() for a client
  * that connects.
+ *
+ * Observers (observe()) hear each count as it is made -- a command, an edited
+ * file, a push, a PR, a closed active span -- with the agent it belongs to.
+ * The Manager's task log (tasks/taskLedger.ts) attributes them to that agent's
+ * live task, so a task's stats and the daily totals come from ONE classifier.
  */
 
 import { createHash } from 'crypto';
@@ -75,6 +80,23 @@ export interface ToolEndResult {
   failed: boolean;
 }
 
+/** One count, as the tracker made it. `at` is the tracker's clock at the time. */
+export type ProgressEvent =
+  /** A shell tool started (counted in commandsRun). */
+  | { kind: 'command'; agentId: number; at: number }
+  /** A file edit started. Reported on every edit, not just a file's first of
+   *  the day; `fileKey` is the file's hashed identity (never its path). */
+  | { kind: 'fileEdited'; agentId: number; at: number; fileKey: string }
+  /** A successful push (counted in pushes). */
+  | { kind: 'push'; agentId: number; at: number; repo: string }
+  /** A PR recorded in today's list (a repeat sighting of its url is not). */
+  | { kind: 'pr'; agentId: number; at: number; pr: DailyPr }
+  /** An active span closed by `waiting`: the ms added to activeMs, so clipped
+   *  at midnight exactly as the totals are. */
+  | { kind: 'activeTime'; agentId: number; at: number; ms: number };
+
+export type ProgressObserver = (event: ProgressEvent) => void;
+
 /** A PR to record: its url when known, else it can't be deduplicated. */
 interface PrSighting {
   url?: string;
@@ -115,6 +137,7 @@ interface DailyFile {
 
 export class ProgressTracker {
   private readonly perAgent = new Map<number, AgentTrack>();
+  private readonly observers = new Set<ProgressObserver>();
   /** Today's totals; undefined until first used. */
   private day: DailyTotals | undefined;
   /** Totals changed since they were last written. */
@@ -155,6 +178,7 @@ export class ProgressTracker {
     if (isShellTool(toolName)) {
       day.commandsRun++;
       dailyChanged = true;
+      this.emit({ kind: 'command', agentId, at: now });
     }
     const file = editedFileOf(toolName, input);
     if (file) {
@@ -163,6 +187,7 @@ export class ProgressTracker {
         day.files.add(key);
         dailyChanged = true;
       }
+      this.emit({ kind: 'fileEdited', agentId, at: now, fileKey: key });
     }
     const phase = classifyTool(toolName, input);
     if (phase) this.advance(agentId, phase, now);
@@ -192,10 +217,13 @@ export class ProgressTracker {
       if (entry) entry.count++;
       else day.pushes.push({ repo, count: 1 });
       changed = true;
+      this.emit({ kind: 'push', agentId, at: now, repo });
     }
     if (opened) {
       const url = findPrUrl(textOf(result.response)) ?? findPrUrl(result.prUrl);
-      changed = this.addPr(day, agent, { url, title: prTitleFromCommand(command) }, now) || changed;
+      changed =
+        this.addPr(day, agentId, agent, { url, title: prTitleFromCommand(command) }, now) ||
+        changed;
     }
     if (changed) this.dailyChanged();
   }
@@ -206,7 +234,15 @@ export class ProgressTracker {
     const agent = this.store.get(agentId);
     if (this.disposed || !agent || !pr.url.startsWith('https://')) return;
     const now = this.now();
-    if (this.addPr(this.today(now), agent, pr, now)) this.dailyChanged();
+    if (this.addPr(this.today(now), agentId, agent, pr, now)) this.dailyChanged();
+  }
+
+  /** Hear every count as it is made; returns the unsubscribe. */
+  observe(observer: ProgressObserver): () => void {
+    this.observers.add(observer);
+    return () => {
+      this.observers.delete(observer);
+    };
   }
 
   /** The store's agentStatus broadcasts drive waitingSince and active time. Only
@@ -227,6 +263,12 @@ export class ProgressTracker {
 
   // ── Output ─────────────────────────────────────────────────
 
+  /** When the agent's current wait on the user began; undefined while it isn't
+   *  waiting. Read by the phone alerts (alerts.ts). */
+  waitingSinceOf(agentId: number): number | undefined {
+    return this.perAgent.get(agentId)?.waitingSince;
+  }
+
   /** What a connecting client is sent: every agent's progress, then today's totals. */
   snapshot(): Array<AgentProgress | DailyStats> {
     const messages: Array<AgentProgress | DailyStats> = [];
@@ -242,6 +284,7 @@ export class ProgressTracker {
     if (this.disposed) return;
     this.flush();
     this.disposed = true;
+    this.observers.clear();
     this.store.off('broadcast', this.onBroadcast);
     this.store.off('agentRemoved', this.onAgentRemoved);
   }
@@ -290,8 +333,10 @@ export class ProgressTracker {
       // A span begun before midnight counts from midnight: yesterday is closed.
       const from = Math.max(track.activeSince, startOfLocalDay(now));
       track.activeSince = undefined;
-      this.today(now).activeMs += Math.max(0, now - from);
+      const ms = Math.max(0, now - from);
+      this.today(now).activeMs += ms;
       this.dailyChanged();
+      if (ms > 0) this.emit({ kind: 'activeTime', agentId, at: now, ms });
     }
     // `waiting` repeats (Stop, then the idle notification); the first one counts.
     if (track.waitingSince === undefined) {
@@ -318,15 +363,34 @@ export class ProgressTracker {
   }
 
   /** Record a PR; false when its url is already in today's list. */
-  private addPr(day: DailyTotals, agent: AgentState, pr: PrSighting, at: number): boolean {
+  private addPr(
+    day: DailyTotals,
+    agentId: number,
+    agent: AgentState,
+    pr: PrSighting,
+    at: number,
+  ): boolean {
     if (pr.url && day.prs.some((p) => p.url === pr.url)) return false;
-    day.prs.push({
+    const entry: DailyPr = {
       title: pr.title?.trim() || DEFAULT_PR_TITLE,
       repo: (pr.url && repoFromPrUrl(pr.url)) || pr.repo || repoOf(agent),
       ...(pr.url ? { url: pr.url } : {}),
       at,
-    });
+    };
+    day.prs.push(entry);
+    this.emit({ kind: 'pr', agentId, at, pr: { ...entry } });
     return true;
+  }
+
+  /** Tell every observer; one that throws is logged and never stops the count. */
+  private emit(event: ProgressEvent): void {
+    for (const observer of this.observers) {
+      try {
+        observer(event);
+      } catch (err) {
+        console.error('[Pixel Agents] Progress observer failed:', err);
+      }
+    }
   }
 
   private dailyChanged(): void {
@@ -403,8 +467,8 @@ function statsMessage(day: DailyTotals): DailyStats {
   };
 }
 
-/** Local calendar date, YYYY-MM-DD. */
-function localDateKey(t: number): string {
+/** Local calendar date, YYYY-MM-DD: the key of the daily files (and the task log's). */
+export function localDateKey(t: number): string {
   const d = new Date(t);
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');

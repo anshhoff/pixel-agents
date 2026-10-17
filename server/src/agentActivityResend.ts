@@ -1,5 +1,6 @@
 import type { AgentStateStore } from './agentStateStore.js';
 import { getLocalSessionWatcher } from './localSessions.js';
+import { getTaskLedger } from './tasks/taskLedger.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { getProgressTracker } from './transcriptParser.js';
 
@@ -12,8 +13,8 @@ import { getProgressTracker } from './transcriptParser.js';
  * 3. Background tools with runInBackground + isTeammateSpawn flags, skipping promoted spawns
  * 4. Waiting status
  * 5. Context usage
- * Then, once for the office: every agent's stage track and today's totals,
- * and an agentSleep for each sleeping agent.
+ * Then, once for the office: today's task log (tasksSnapshot), every agent's
+ * stage track and today's totals, and an agentSleep for each sleeping agent.
  */
 export function resendAgentActivity(
   send: (message: Record<string, unknown>) => void,
@@ -90,8 +91,15 @@ export function resendAgentActivity(
     }
   }
 
-  // Work progress: an agentProgress per agent, then dailyStats. Looked up here
+  // The Manager's task log for today (tasks/taskLedger.ts). Looked up here
   // rather than passed in, so both surfaces' resends carry it.
+  const tasks = getTaskLedger();
+  if (tasks?.tracks(store)) {
+    send({ ...tasks.snapshot() });
+  }
+
+  // Work progress: an agentProgress per agent, then dailyStats. Looked up the
+  // same way.
   const progress = getProgressTracker();
   if (progress?.tracks(store)) {
     for (const message of progress.snapshot()) {

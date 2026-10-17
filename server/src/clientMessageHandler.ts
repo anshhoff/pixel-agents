@@ -25,6 +25,7 @@ import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import { isDateKey } from './tasks/taskLedger.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
 
@@ -64,8 +65,9 @@ export interface ClientMessageContext {
   onReloadAssets?: ReloadAssetsSideEffect;
   /**
    * Whether this client may change ANYTHING. An unprivileged client is
-   * read-only: it may load and watch the office (`webviewReady`) and every
-   * other message is refused at the top of handleClientMessage. Decided
+   * read-only: it may load and watch the office (`webviewReady`) and read the
+   * Manager's task log and reports (READ_ONLY_MESSAGE_TYPES); every other
+   * message is refused at the top of handleClientMessage. Decided
    * per-connection by the transport (wsAuth.standaloneHandshakeVerdict, or the
    * embedded Bearer token); defaults to false so a caller that forgets to pass
    * it gets the safe answer.
@@ -75,6 +77,25 @@ export interface ClientMessageContext {
    *  mode, where the editor owns terminal lifecycle. */
   ptyManager?: PtySessionManager;
 }
+
+/**
+ * The only messages a read-only (unprivileged) client may send. Keep this to
+ * pure reads that reveal nothing the read-only office doesn't already show:
+ *  - webviewReady: load and watch the office.
+ *  - requestTasks / requestReport: read a day's task log or the Manager's
+ *    report. Task titles, repos, statuses and counts are what the office
+ *    already broadcasts live (labels, the TODAY strip, taskUpdated, and
+ *    today's tasksSnapshot on connect), and the report is prose over that same
+ *    log. They change nothing and run nothing, and the phone view -- which is
+ *    unprivileged -- needs them for the Tasks board's history and Report tab.
+ * Anything that writes, launches or spends (writeReportNow runs claude on the
+ * operator's subscription) stays privileged.
+ */
+const READ_ONLY_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  'webviewReady',
+  'requestTasks',
+  'requestReport',
+]);
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
 const KEY_SOUND_ENABLED = 'pixel-agents.soundEnabled';
@@ -127,8 +148,8 @@ export function handleClientMessage(
 
   // Tokenless is read-only. Refused HERE, once, rather than per message, so a
   // message type added later is privileged by default instead of open until
-  // someone remembers to gate it.
-  if (!ctx.privileged && msg.type !== 'webviewReady') {
+  // someone remembers to gate it. Only READ_ONLY_MESSAGE_TYPES get through.
+  if (!ctx.privileged && !READ_ONLY_MESSAGE_TYPES.has(String(msg.type))) {
     refuseReadOnly(msg, send, ctx);
     return;
   }
@@ -179,6 +200,35 @@ export function handleClientMessage(
     case 'requestDiagnostics':
       // Point-to-point reply to the requesting socket (NOT a broadcast).
       send({ type: 'agentDiagnostics', agents: buildAgentDiagnostics(store) });
+      break;
+
+    case 'requestTasks':
+      // Read-only clients may ask (READ_ONLY_MESSAGE_TYPES). The date names a
+      // file, so anything but a real YYYY-MM-DD is dropped unanswered.
+      if (!isDateKey(msg.date)) break;
+      send({
+        type: 'tasksSnapshot',
+        date: msg.date,
+        tasks: runtime?.tasks.tasksFor(msg.date) ?? [],
+      });
+      break;
+
+    case 'requestReport':
+      // Read-only clients may ask (READ_ONLY_MESSAGE_TYPES); same date rule.
+      if (!isDateKey(msg.date)) break;
+      send({
+        ...(runtime?.reports.reportMessage(msg.date) ?? {
+          type: 'report',
+          date: msg.date,
+          exists: false,
+        }),
+      });
+      break;
+
+    case 'writeReportNow':
+      // Privileged (past the gate above): it runs claude on the operator's
+      // subscription. Everyone hears reportReady when it is saved.
+      void runtime?.reports.writeNow();
       break;
 
     case 'saveLayout':
@@ -594,6 +644,8 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   const externalAgents: Record<number, boolean> = {};
   const sourceLabels: Record<number, string> = {};
   const sourceKinds: Record<number, 'computer' | 'cloud'> = {};
+  const titles: Record<number, string> = {};
+  const backgroundAgents: Record<number, boolean> = {};
   const persistedSeats = adapter?.loadSeats() ?? {};
   const agentMeta: Record<number, { palette?: number; hueShift?: number; seatId?: string }> = {};
   for (const [id, agent] of store) {
@@ -607,6 +659,12 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     if (agent.remoteSource) {
       sourceLabels[id] = agent.remoteSource.label;
       sourceKinds[id] = agent.remoteSource.kind;
+    }
+    if (agent.title) {
+      titles[id] = agent.title;
+    }
+    if (agent.background) {
+      backgroundAgents[id] = true;
     }
     const persisted = persistedSeats[String(id)];
     agentMeta[id] = {
@@ -623,6 +681,8 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     externalAgents,
     sourceLabels,
     sourceKinds,
+    titles,
+    backgroundAgents,
   });
 
   // 7. Layout last (see step 3): flushes the webview's buffered existingAgents

@@ -568,6 +568,172 @@ describe('LocalSessionWatcher (through AgentRuntime)', () => {
     expect(sleeps()).toEqual([]);
   });
 
+  // ── Background sessions ──────────────────────────────────
+
+  function kinds(): Message[] {
+    return messages.filter((m) => m.type === 'agentKind');
+  }
+
+  /** A local session adopted from its hooks (SessionStart + a confirming Stop). */
+  function adoptViaHooks(sessionId: string, cwd: string): AgentState {
+    runtime.watchAllSessions.current = true;
+    const file = writeTranscript(cwd, sessionId);
+    runtime.handleHookEvent('claude', {
+      hook_event_name: 'SessionStart',
+      session_id: sessionId,
+      transcript_path: file,
+      cwd,
+      source: 'startup',
+    });
+    runtime.handleHookEvent('claude', { hook_event_name: 'Stop', session_id: sessionId });
+    const agent = agentFor(sessionId);
+    expect(agent).toBeDefined();
+    return agent!;
+  }
+
+  it('adopts a session listed with a non-interactive kind as background, announced in agentCreated', async () => {
+    const cwd = cwdOf('routine');
+    writeTranscript(cwd, 'sess-bg', 5 * MIN);
+    sessions = [{ ...list('sess-bg', cwd), kind: 'background' }];
+    const announced: Array<boolean | undefined> = [];
+    store.on('agentAdded', (_id, a) => announced.push(a.background));
+
+    await poll();
+
+    expect(agentFor('sess-bg')!.background).toBe(true);
+    expect(announced).toEqual([true]);
+    // Already in agentCreated: no separate agentKind for it.
+    expect(kinds()).toEqual([]);
+  });
+
+  it('treats a listed session without a kind as interactive', async () => {
+    const cwd = cwdOf('old-cli');
+    writeTranscript(cwd, 'sess-nokind', 5 * MIN);
+    sessions = [{ sessionId: 'sess-nokind', cwd, status: 'idle' }];
+
+    await poll();
+
+    expect(agentFor('sess-nokind')!.background).toBeUndefined();
+  });
+
+  it('reclassifies an agent when its listed kind changes, broadcasting agentKind', async () => {
+    const cwd = cwdOf('switching');
+    writeTranscript(cwd, 'sess-switch', 5 * MIN);
+    sessions = [list('sess-switch', cwd)];
+    await poll();
+    const agent = agentFor('sess-switch')!;
+    expect(agent.background).toBeUndefined();
+
+    sessions = [{ ...list('sess-switch', cwd), kind: 'sdk' }];
+    await poll();
+    expect(agent.background).toBe(true);
+
+    sessions = [list('sess-switch', cwd)];
+    await poll();
+    expect(agent.background).toBeUndefined();
+
+    await poll();
+    expect(kinds()).toEqual([
+      { type: 'agentKind', id: agent.id, background: true },
+      { type: 'agentKind', id: agent.id, background: false },
+    ]);
+  });
+
+  it('marks a hook-adopted local session the list never shows within 30 s as headless', async () => {
+    const agent = adoptViaHooks('sess-headless', cwdOf('cron'));
+    sessions = [];
+
+    clock += 15_000;
+    await poll();
+    expect(agent.background).toBeUndefined();
+
+    clock += 15_000;
+    await poll();
+    expect(agent.background).toBe(true);
+    expect(kinds()).toEqual([{ type: 'agentKind', id: agent.id, background: true }]);
+
+    // Decided once: later listings without it change nothing.
+    clock += LOCAL_SESSIONS_POLL_MS;
+    await poll();
+    expect(kinds()).toHaveLength(1);
+  });
+
+  it('keeps a hook-adopted session the list shows in time interactive', async () => {
+    const cwd = cwdOf('desk');
+    const agent = adoptViaHooks('sess-shown', cwd);
+
+    clock += 15_000;
+    sessions = [list('sess-shown', cwd, 'busy')];
+    await poll();
+
+    sessions = [];
+    clock += 60_000;
+    await poll();
+    await poll();
+
+    expect(agent.background).toBeUndefined();
+    expect(kinds()).toEqual([]);
+  });
+
+  it('reclassifies a headless-marked session that later shows up as interactive', async () => {
+    const cwd = cwdOf('late-list');
+    const agent = adoptViaHooks('sess-late', cwd);
+    clock += 31_000;
+    await poll();
+    expect(agent.background).toBe(true);
+
+    sessions = [list('sess-late', cwd, 'busy')];
+    await poll();
+
+    expect(agent.background).toBeUndefined();
+    expect(kinds().at(-1)).toEqual({ type: 'agentKind', id: agent.id, background: false });
+  });
+
+  it('decides nothing from failed listings', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const agent = adoptViaHooks('sess-unknown', cwdOf('nolist'));
+    listSessions.mockRejectedValue(new Error('spawn claude.exe ENOENT'));
+
+    for (let i = 0; i < 4; i++) {
+      clock += LOCAL_SESSIONS_POLL_MS;
+      await poll();
+    }
+
+    expect(agent.background).toBeUndefined();
+    expect(kinds()).toEqual([]);
+  });
+
+  it('never marks a remote agent or a teammate background', async () => {
+    runtime.handleHookEvent('claude', {
+      hook_event_name: 'Stop',
+      session_id: 'laptop:s9',
+      cwd: '/home/user/web',
+      pixel_source: LAPTOP,
+    });
+    const remote = agentFor('laptop:s9')!;
+    const cwd = cwdOf('team');
+    const teammateFile = writeTranscript(cwd, 'sess-mate', 5 * MIN);
+    const teammate = addBoardAgent(30, {
+      sessionId: 'sess-mate',
+      jsonlFile: teammateFile,
+      leadAgentId: 29,
+    });
+    sessions = [
+      { ...list('laptop:s9', cwd), kind: 'background' },
+      { ...list('sess-mate', cwd), kind: 'background' },
+    ];
+
+    clock += 60_000;
+    await poll();
+    sessions = [];
+    clock += 60_000;
+    await poll();
+
+    expect(remote.background).toBeUndefined();
+    expect(teammate.background).toBeUndefined();
+    expect(kinds()).toEqual([]);
+  });
+
   // ── Lifecycle ────────────────────────────────────────────
 
   it('polls on start and every LOCAL_SESSIONS_POLL_MS until stopped', async () => {
