@@ -7,6 +7,8 @@ import {
   ZOOM_MAX,
   ZOOM_MIN,
 } from '../constants.js';
+import type { PanDirection } from '../office/camera.js';
+import { pressPan, releaseAllPan, releasePan } from '../office/panInput.js';
 import { Button } from './ui/Button.js';
 
 interface ZoomControlsProps {
@@ -144,6 +146,71 @@ export function ZoomControls({ zoom, onZoomChange, onFit }: ZoomControlsProps) {
           <FitIcon />
         </Button>
       </div>
+      <PanPad />
     </>
+  );
+}
+
+const PAD_ARROWS: Array<{ dir: PanDirection; label: string; cell: string; points: string }> = [
+  {
+    dir: { dx: 0, dy: -1 },
+    label: 'Move up',
+    cell: 'col-start-2 row-start-1',
+    points: '9,4 15,13 3,13',
+  },
+  {
+    dir: { dx: -1, dy: 0 },
+    label: 'Move left',
+    cell: 'col-start-1 row-start-2',
+    points: '4,9 13,3 13,15',
+  },
+  {
+    dir: { dx: 1, dy: 0 },
+    label: 'Move right',
+    cell: 'col-start-3 row-start-2',
+    points: '14,9 5,3 5,15',
+  },
+  {
+    dir: { dx: 0, dy: 1 },
+    label: 'Move down',
+    cell: 'col-start-2 row-start-3',
+    points: '9,14 3,5 15,5',
+  },
+];
+
+/** Arrow pad beside the zoom buttons: tap to glide a few tiles, hold to keep
+ *  moving — the same pan the arrow keys drive (office/panInput). */
+function PanPad() {
+  return (
+    <div
+      className="absolute top-8 left-56 z-10 grid grid-cols-3 grid-rows-3 gap-2"
+      onPointerLeave={releaseAllPan}
+    >
+      {PAD_ARROWS.map(({ dir, label, cell, points }) => (
+        <Button
+          key={label}
+          size="icon_lg"
+          className={`${cell} w-32! h-32! border-border! shadow-pixel touch-none`}
+          title={`${label} (arrow keys / WASD)`}
+          aria-label={label}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            pressPan(dir);
+          }}
+          onPointerUp={() => releasePan(dir)}
+          onPointerCancel={() => releasePan(dir)}
+          onKeyDown={(e) => {
+            if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) pressPan(dir);
+          }}
+          onKeyUp={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') releasePan(dir);
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 18 18">
+            <polygon points={points} fill="currentColor" />
+          </svg>
+        </Button>
+      ))}
+    </div>
   );
 }

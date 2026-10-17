@@ -9,6 +9,7 @@ import {
 import { isTypingInTerminal } from '../../terminal/terminalDom.js';
 import type { PanDirection } from '../camera.js';
 import { isEditableTarget, keyPanDirection, keyPanImpulse, stepKeyPan } from '../camera.js';
+import { subscribePanInput } from '../panInput.js';
 import { TILE_SIZE } from '../types.js';
 
 interface KeyboardPanOptions {
@@ -87,6 +88,18 @@ export function useKeyboardPan(options: KeyboardPanOptions): void {
       if (rafId === 0) rafId = requestAnimationFrame(frame);
     };
 
+    // A direction goes down: the first press queues a step, holding drifts on.
+    const press = (dir: PanDirection) => {
+      if (!held.has(dirKey(dir))) {
+        const impulse = keyPanImpulse(dir, KEY_PAN_STEP_TILES * tilePx());
+        glideX += impulse.x;
+        glideY += impulse.y;
+      }
+      held.set(dirKey(dir), dir);
+      latest.current.onManualPan();
+      run();
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const active = document.activeElement;
@@ -97,14 +110,7 @@ export function useKeyboardPan(options: KeyboardPanOptions): void {
       // OS auto-repeat fires keydown again and again while held: the hold
       // drift covers that, so only the first press queues a step.
       if (e.repeat && held.has(dirKey(dir))) return;
-      if (!held.has(dirKey(dir))) {
-        const impulse = keyPanImpulse(dir, KEY_PAN_STEP_TILES * tilePx());
-        glideX += impulse.x;
-        glideY += impulse.y;
-      }
-      held.set(dirKey(dir), dir);
-      latest.current.onManualPan();
-      run();
+      press(dir);
     };
     // Keyup always releases, whatever has focus now and whether or not WASD
     // is enabled — a key pressed before focus moved must not stay held.
@@ -114,6 +120,12 @@ export function useKeyboardPan(options: KeyboardPanOptions): void {
     };
     // Alt-tab with a key down never delivers its keyup here.
     const onBlur = () => held.clear();
+    // The on-screen arrow pad (ZoomControls) drives the same pan.
+    const unsubscribePad = subscribePanInput((e) => {
+      if (e.kind === 'press') press(e.dir);
+      else if (e.kind === 'release') held.delete(dirKey(e.dir));
+      else held.clear();
+    });
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
@@ -122,6 +134,7 @@ export function useKeyboardPan(options: KeyboardPanOptions): void {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
+      unsubscribePad();
       if (rafId) cancelAnimationFrame(rafId);
     };
   }, []);
