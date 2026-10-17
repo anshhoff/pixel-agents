@@ -94,6 +94,19 @@ Below, `<host>` is your Funnel name, `<machine>.<tailnet>.ts.net` (step 2 shows 
 
    Expect `401` (no key). That means Funnel reaches the relay.
 
+5. Optional, watch from your phone: install the Tailscale app on the phone and sign in to the same
+   tailnet. Then, on this PC, serve the board **inside the tailnet only**, on its own port:
+
+   ```powershell
+   tailscale serve --bg --https=3443 http://127.0.0.1:3100
+   tailscale serve status
+   ```
+
+   Open `https://<host>:3443` on the phone and add it to the home screen. It is read-only (no token).
+   Funnel is switched on per port, so the board must never share port 443 with the Funnel:
+   `status` must show Funnel on `:443` only, and `curl -i https://<host>:3443` from a device
+   that is **not** on the tailnet must fail to connect.
+
 ## 3. Another computer
 
 Works from any network. Needs `bash` and `curl`: macOS, Linux, or Windows with Git Bash
