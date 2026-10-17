@@ -12,9 +12,26 @@ import { Button } from './ui/Button.js';
 interface ZoomControlsProps {
   zoom: number;
   onZoomChange: (zoom: number) => void;
+  /** Frame the whole office (largest zoom that fits, centered). */
+  onFit: () => void;
 }
 
-export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
+/** Four corner brackets — "frame everything". Shared with the phone shell's
+ *  Fit button, which has no zoom buttons to sit beside. */
+export function FitIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path
+        d="M2 6V2h4M12 2h4v4M16 12v4h-4M6 16H2v-4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="square"
+      />
+    </svg>
+  );
+}
+
+export function ZoomControls({ zoom, onZoomChange, onFit }: ZoomControlsProps) {
   const [showLevel, setShowLevel] = useState(false);
   const [fadeOut, setFadeOut] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -116,6 +133,15 @@ export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
               strokeLinecap="round"
             />
           </svg>
+        </Button>
+        <Button
+          size="icon_lg"
+          onClick={onFit}
+          className="border-border! shadow-pixel"
+          title="Fit the whole office (drag, arrow keys or WASD to move around)"
+          aria-label="Fit the whole office"
+        >
+          <FitIcon />
         </Button>
       </div>
     </>

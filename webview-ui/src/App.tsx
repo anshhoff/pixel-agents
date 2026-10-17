@@ -17,8 +17,14 @@ import { Tooltip } from './components/Tooltip.js';
 import { Button } from './components/ui/Button.js';
 import { Modal } from './components/ui/Modal.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
-import { ZoomControls } from './components/ZoomControls.js';
-import { OFFICE_CANVAS_TEST_ID } from './constants.js';
+import { FitIcon, ZoomControls } from './components/ZoomControls.js';
+import {
+  FIT_MARGINS_DESKTOP,
+  FIT_MARGINS_DESKTOP_READ_ONLY,
+  FIT_MARGINS_MOBILE,
+  OFFICE_CANVAS_TEST_ID,
+} from './constants.js';
+import { useCameraFit } from './hooks/useCameraFit.js';
 import { useDirectoryEditor } from './hooks/useDirectoryEditor.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
@@ -90,6 +96,7 @@ function App() {
     subagentTools,
     subagentCharacters,
     agentProgress,
+    agentSleep,
     dailyStats,
     layoutReady,
     layoutWasReset,
@@ -318,6 +325,25 @@ function App() {
 
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Fit: the Fit button everywhere; auto-fit (first layout, layout resize,
+  // viewport resize — until the user zooms or pans) in the browser only —
+  // the TV / phone board. VS Code panels keep their DPR-based default zoom.
+  const cameraFit = useCameraFit({
+    getOfficeState,
+    containerRef,
+    zoom: editor.zoom,
+    setZoom: editor.handleZoomChange,
+    panRef: editor.panRef,
+    margins: isMobile
+      ? FIT_MARGINS_MOBILE
+      : officeReadOnly
+        ? FIT_MARGINS_DESKTOP_READ_ONLY
+        : FIT_MARGINS_DESKTOP,
+    autoFit: isBrowserRuntime,
+    layoutReady,
+    isEditMode: editor.isEditMode,
+  });
+
   const [editorTickForKeyboard, setEditorTickForKeyboard] = useState(0);
   useEditorKeyboard(
     editor.isEditMode,
@@ -488,18 +514,26 @@ function App() {
         onDrop={editor.handleDrop}
         editorTick={editor.editorTick}
         zoom={editor.zoom}
-        onZoomChange={editor.handleZoomChange}
+        onZoomChange={cameraFit.userZoom}
         panRef={editor.panRef}
         showAreas={effectiveShowAreas}
         activeAreaLabel={activeAreaLabel}
         tapSelectsFirst={isMobile}
+        onManualCamera={cameraFit.markManual}
       />
 
       {!isDebugMode ? (
         <>
-          {/* Mobile: pinch replaces the zoom buttons, and the toolbar's
-                jobs move to the card bar (+) and the floating Settings button. */}
-          {!isMobile && <ZoomControls zoom={editor.zoom} onZoomChange={editor.handleZoomChange} />}
+          {/* Mobile: pinch replaces the zoom buttons (Fit floats top-left
+                instead), and the toolbar's jobs move to the card bar (+) and
+                the floating Settings button. */}
+          {!isMobile && (
+            <ZoomControls
+              zoom={editor.zoom}
+              onZoomChange={cameraFit.userZoom}
+              onFit={cameraFit.fit}
+            />
+          )}
 
           {/* Vignette overlay */}
           <div
@@ -578,6 +612,7 @@ function App() {
             subagentTools={subagentTools}
             subagentCharacters={subagentCharacters}
             agentProgress={agentProgress}
+            agentSleep={agentSleep}
             containerRef={containerRef}
             zoom={editor.zoom}
             panRef={editor.panRef}
@@ -658,18 +693,30 @@ function App() {
         />
       )}
 
-      {/* Mobile: Settings floats top-left (the layout editor stays desktop-
-            only — its tools are drag/hover-driven). */}
-      {isMobile && !isDebugMode && !officeReadOnly && (
-        <div className="absolute mobile-safe-top left-8 z-20">
+      {/* Mobile: Fit and Settings float top-left (the layout editor stays
+            desktop-only — its tools are drag/hover-driven). Fit shows in a
+            read-only office too: looking around is not a change. */}
+      {isMobile && !isDebugMode && (
+        <div className="absolute mobile-safe-top left-8 z-20 flex items-center gap-6">
           <Button
             size="sm"
-            variant={isSettingsOpen ? 'active' : 'default'}
-            className="border-border! shadow-pixel"
-            onClick={() => setIsSettingsOpen((v) => !v)}
+            className="border-border! shadow-pixel flex items-center self-stretch"
+            onClick={cameraFit.fit}
+            title="Fit the whole office"
+            aria-label="Fit the whole office"
           >
-            Settings
+            <FitIcon />
           </Button>
+          {!officeReadOnly && (
+            <Button
+              size="sm"
+              variant={isSettingsOpen ? 'active' : 'default'}
+              className="border-border! shadow-pixel"
+              onClick={() => setIsSettingsOpen((v) => !v)}
+            >
+              Settings
+            </Button>
+          )}
         </div>
       )}
 

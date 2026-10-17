@@ -43,6 +43,9 @@ export const SELECTED_OUTLINE_ALPHA = 1.0;
 export const HOVERED_OUTLINE_ALPHA = 0.5;
 /** Headless agents (adopted, no terminal to focus) render slightly translucent. */
 export const HEADLESS_CHARACTER_ALPHA = 0.5;
+/** Sleeping agents (session open but idle, agentSleep) render dimmed — through
+ *  the same alpha path as headless ones; the fainter of the two wins. */
+export const SLEEPING_CHARACTER_ALPHA = 0.4;
 export const GHOST_PREVIEW_SPRITE_ALPHA = 0.5;
 export const GHOST_PREVIEW_TINT_ALPHA = 0.25;
 export const SELECTION_DASH_PATTERN: [number, number] = [4, 3];
@@ -89,6 +92,26 @@ export const ZOOM_LEVEL_HIDE_DELAY_MS = 2000;
 export const ZOOM_LEVEL_FADE_DURATION_SEC = 0.5;
 export const ZOOM_SCROLL_THRESHOLD = 50;
 export const PAN_MARGIN_FRACTION = 0.25;
+
+// ── Camera controls (office/camera.ts) ───────────────────────
+/** Arrow keys / WASD: one press glides the camera this many tiles... */
+export const KEY_PAN_STEP_TILES = 3;
+/** ...easing out at this rate (1/s, exponential: ~95% of a step has landed
+ *  after 0.3 s)... */
+export const KEY_PAN_GLIDE_RATE_PER_SEC = 10;
+/** ...and a key held down keeps the camera moving at this speed. */
+export const KEY_PAN_HOLD_TILES_PER_SEC = 8;
+/** A left-button press on the office becomes a pan once the pointer has moved
+ *  this far (CSS px); anything shorter is still a click. */
+export const MOUSE_DRAG_PAN_THRESHOLD_PX = 5;
+/** What Fit keeps clear around the office (CSS px), per shell. Desktop: the
+ *  zoom buttons top-left, the card bar along the right edge, the toolbar and
+ *  done-today strip along the bottom (just the strip in a read-only office,
+ *  which has no toolbar). Phones: the Fit / Settings buttons top-left and the
+ *  compact strip at the bottom. */
+export const FIT_MARGINS_DESKTOP = { top: 16, right: 88, bottom: 120, left: 64 } as const;
+export const FIT_MARGINS_DESKTOP_READ_ONLY = { top: 16, right: 88, bottom: 56, left: 64 } as const;
+export const FIT_MARGINS_MOBILE = { top: 48, right: 8, bottom: 36, left: 8 } as const;
 
 // ── Editor ───────────────────────────────────────────────────
 export const UNDO_STACK_MAX_SIZE = 50;
@@ -209,6 +232,16 @@ export const AUTO_ON_SIDE_DEPTH = 2;
 export const CHARACTER_HIT_HALF_WIDTH = 8;
 export const CHARACTER_HIT_HEIGHT = 24;
 export const TOOL_OVERLAY_VERTICAL_OFFSET = 32;
+/** Label de-overlap (office/labelLayout.ts): colliding labels stack upward
+ *  with this gap between them... */
+export const LABEL_STACK_GAP_PX = 3;
+/** ...but none is lifted further than this above its own character — past it
+ *  a label stays put (overlapping) rather than drift away from who it labels. */
+export const LABEL_MAX_SHIFT_PX = 96;
+/** Labels whose bottom edges fall in the same band of this many px count as
+ *  one row and stack in agent-id order, so a pixel of difference between
+ *  seated neighbours can't flip which one moves from frame to frame. */
+export const LABEL_ROW_BAND_PX = 6;
 
 // ── Greeter + Intro bubble ──────────────────────────────────
 /** Reserved character id for the Intro's greeter. Far outside both real agent

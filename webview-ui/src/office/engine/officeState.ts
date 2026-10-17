@@ -41,7 +41,7 @@ import { CharacterState, Direction, PetState, TILE_SIZE } from '../types.js';
 import { createCharacter, updateCharacter } from './characters.js';
 import { advanceMatrixEffect, startMatrixEffect } from './matrixEffectState.js';
 import { createPet, updatePet } from './petEntity.js';
-import { anchorTile, closestFreeSeat } from './seatPlacement.js';
+import { anchorTile, closestFreeSeat, helperSeat } from './seatPlacement.js';
 
 /** Internal helper: facing-tile coords for a seat. Returns null for invalid direction. */
 function seatFacingOffset(direction: Direction): { dCol: number; dRow: number } {
@@ -89,6 +89,10 @@ export class OfficeState {
   /** Agent ID → where a relayed remote session runs. Local agents are absent.
    *  Kept outside `characters` so it survives existingAgents buffering. */
   agentSources: Map<number, { label: string; kind: 'computer' | 'cloud' }> = new Map();
+  /** Agents the server reports sleeping (agentSleep). By id, outside
+   *  `characters`, for the same reason as agentSources: the message can arrive
+   *  before the character does, and addAgent applies it on creation. */
+  sleepingAgents: Set<number> = new Set();
   private nextSubagentId = -1;
 
   /**
@@ -195,8 +199,12 @@ export class OfficeState {
       ch.seatId = null; // will be reassigned below
     }
 
-    // Second pass: assign remaining characters to free seats
-    for (const ch of this.characters.values()) {
+    // Second pass: assign remaining characters to free seats — agents before
+    // helpers, so a smaller layout never seats a helper and strands an agent.
+    const unseated = [...this.characters.values()].sort(
+      (a, b) => Number(a.isSubagent) - Number(b.isSubagent),
+    );
+    for (const ch of unseated) {
       if (ch.seatId) continue;
       const seatId = this.findFreeSeat(ch.directoryName);
       if (seatId) {
@@ -474,6 +482,9 @@ export class OfficeState {
       const seat = this.seats.get(preferredSeatId)!;
       if (!seat.assigned) {
         seatId = preferredSeatId;
+      } else {
+        // A helper keeping the agent's own (restored) seat warm gives it back.
+        seatId = this.reclaimHelperSeat(preferredSeatId);
       }
     }
     if (!seatId && anchorAt) {
@@ -481,6 +492,10 @@ export class OfficeState {
     }
     if (!seatId) {
       seatId = this.findFreeSeat(directoryName);
+    }
+    if (!seatId) {
+      // Office full: agents outrank helpers, so take one of theirs.
+      seatId = this.reclaimHelperSeat();
     }
 
     let ch: Character;
@@ -507,10 +522,73 @@ export class OfficeState {
     if (directoryName) {
       ch.directoryName = directoryName;
     }
+    if (this.sleepingAgents.has(id)) ch.isSleeping = true;
     if (!skipSpawnEffect) {
       startMatrixEffect(ch, 'spawn');
     }
     this.characters.set(id, ch);
+  }
+
+  /**
+   * Free a seat a helper (sub-agent) holds, for a top-level agent: `seatId`
+   * when a helper sits there (the agent's own restored seat), else any
+   * helper's seat (the office is full). Agents outrank helpers. The helper
+   * moves to another free seat near its parent if there is one, else stands
+   * beside the parent — where helpers stood before they took seats. Returns
+   * the freed seat (now unassigned), or null when no helper holds one.
+   */
+  private reclaimHelperSeat(seatId?: string): string | null {
+    let helper: Character | undefined;
+    for (const ch of this.characters.values()) {
+      if (!ch.isSubagent || !ch.seatId || ch.matrixEffect === 'despawn') continue;
+      if (seatId === undefined || ch.seatId === seatId) {
+        helper = ch;
+        break;
+      }
+    }
+    if (!helper?.seatId) return null;
+    const freed = helper.seatId;
+    const parent =
+      helper.parentAgentId !== null ? this.characters.get(helper.parentAgentId) : undefined;
+    // Still marked assigned while choosing, so the helper can't pick it again.
+    const next = helperSeat(parent, this.seats);
+    let target: { col: number; row: number } | null;
+    if (next) {
+      const seat = this.seats.get(next)!;
+      seat.assigned = true;
+      helper.seatId = next;
+      target = { col: seat.seatCol, row: seat.seatRow };
+    } else {
+      helper.seatId = null;
+      const near = anchorTile(parent, this.seats) ?? { col: helper.tileCol, row: helper.tileRow };
+      target = this.closestFreeWalkableTile(near.col, near.row);
+    }
+    const freedSeat = this.seats.get(freed);
+    if (freedSeat) freedSeat.assigned = false;
+    if (!target) return freed;
+    // Off the chair it sits on (blocked to everyone now — findPath checks only
+    // the tiles it steps onto, so it can leave one) to the new spot.
+    const sub = helper;
+    const to = target;
+    const path = this.withOwnSeatUnblocked(sub, () =>
+      findPath(sub.tileCol, sub.tileRow, to.col, to.row, this.tileMap, this.blockedTiles),
+    );
+    if (path.length > 0) {
+      sub.path = path;
+      sub.moveProgress = 0;
+      sub.state = CharacterState.WALK;
+      sub.frame = 0;
+      sub.frameTimer = 0;
+    } else {
+      // No way across: it simply reappears there.
+      sub.tileCol = to.col;
+      sub.tileRow = to.row;
+      sub.x = to.col * TILE_SIZE + TILE_SIZE / 2;
+      sub.y = to.row * TILE_SIZE + TILE_SIZE / 2;
+      sub.path = [];
+      if (next) sub.dir = this.seats.get(next)!.facingDir;
+    }
+    return freed;
   }
 
   // ── Greeter ───────────────────────────────────────────────────
@@ -725,7 +803,16 @@ export class OfficeState {
     return true;
   }
 
-  /** Create a sub-agent character with the parent's palette. Returns the sub-agent ID. */
+  /**
+   * Create a sub-agent character with the parent's palette. Returns the sub-agent ID.
+   *
+   * A helper gets a desk of its own: it materializes beside its parent and
+   * walks to the free seat nearest the parent's seat (seatPlacement.helperSeat),
+   * where it types like any agent — instead of crowding the parent's desk. With
+   * no seat free it stays beside the parent and types in place. Its seat is
+   * freed by removeSubagent / removeAllSubagents, and handed over to a
+   * top-level agent that finds the office full (reclaimHelperSeat).
+   */
   addSubagent(parentAgentId: number, parentToolId: string): number {
     const key = `${parentAgentId}:${parentToolId}`;
     if (this.subagentIdMap.has(key)) return this.subagentIdMap.get(key)!;
@@ -752,6 +839,28 @@ export class OfficeState {
     if (parentCh) ch.dir = parentCh.dir;
     ch.isSubagent = true;
     ch.parentAgentId = parentAgentId;
+
+    const seatId = helperSeat(parentCh, this.seats);
+    if (seatId) {
+      const seat = this.seats.get(seatId)!;
+      seat.assigned = true;
+      ch.seatId = seatId;
+      const path = this.withOwnSeatUnblocked(ch, () =>
+        findPath(spawn.col, spawn.row, seat.seatCol, seat.seatRow, this.tileMap, this.blockedTiles),
+      );
+      if (path.length > 0) {
+        // Walk over once the spawn effect has played (the FSM waits for it).
+        ch.path = path;
+        ch.state = CharacterState.WALK;
+      } else {
+        // No way there from beside the parent: appear in the seat instead.
+        ch.tileCol = seat.seatCol;
+        ch.tileRow = seat.seatRow;
+        ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
+        ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
+        ch.dir = seat.facingDir;
+      }
+    }
     startMatrixEffect(ch, 'spawn');
     this.characters.set(id, ch);
 
@@ -1116,6 +1225,22 @@ export class OfficeState {
     const ch = this.characters.get(id);
     if (!ch) return;
     ch.isHeadless = headless;
+  }
+
+  /**
+   * Put an agent to sleep (session open but idle) or wake it. Remembered by
+   * id even before the character exists. A sleeper that's up and wandering
+   * heads back to its seat (the FSM keeps it there, dimmed, until it wakes);
+   * waking takes effect on the next frame — the renderer and the FSM read
+   * the flag live.
+   */
+  setAgentSleeping(id: number, sleeping: boolean): void {
+    if (sleeping) this.sleepingAgents.add(id);
+    else this.sleepingAgents.delete(id);
+    const ch = this.characters.get(id);
+    if (!ch || (ch.isSleeping ?? false) === sleeping) return;
+    ch.isSleeping = sleeping;
+    if (sleeping && !ch.isActive && ch.state !== CharacterState.TYPE) this.sendToSeat(id);
   }
 
   setAgentContext(id: number, contextTokens: number, maxContextTokens: number): void {

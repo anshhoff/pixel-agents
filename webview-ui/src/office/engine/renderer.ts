@@ -39,6 +39,7 @@ import {
   SELECTED_OUTLINE_ALPHA,
   SELECTION_DASH_PATTERN,
   SELECTION_HIGHLIGHT_COLOR,
+  SLEEPING_CHARACTER_ALPHA,
   VOID_TILE_DASH_PATTERN,
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
@@ -397,8 +398,12 @@ export function renderScene(
     const charZY = ch.y + TILE_SIZE / 2 + CHARACTER_Z_SORT_OFFSET;
 
     // Headless agents (adopted, no terminal to focus) render translucent while
-    // the "Display headless as ghosts" setting is on.
-    const alpha = ch.isHeadless && ghostHeadlessAgents ? HEADLESS_CHARACTER_ALPHA : 1;
+    // the "Display headless as ghosts" setting is on; sleeping agents (open
+    // but idle sessions) always render dimmed. Both: the fainter wins.
+    const alpha = Math.min(
+      ch.isHeadless && ghostHeadlessAgents ? HEADLESS_CHARACTER_ALPHA : 1,
+      ch.isSleeping ? SLEEPING_CHARACTER_ALPHA : 1,
+    );
 
     // Matrix spawn/despawn effect — skip outline, use per-pixel rendering
     if (ch.matrixEffect) {

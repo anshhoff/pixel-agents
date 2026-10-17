@@ -36,6 +36,20 @@ export function anchorTile(
     : { col: anchor.tileCol, row: anchor.tileRow };
 }
 
+/**
+ * The seat a new helper (sub-agent) takes: the free seat nearest its parent's
+ * seat — the clustering teammates get, so a helper works at the next desk
+ * over instead of standing at its parent's. Null when the parent is unknown or
+ * no seat is free (the helper then stays beside the parent).
+ */
+export function helperSeat(
+  parent: AnchorLike | undefined,
+  seats: ReadonlyMap<string, SeatLike>,
+): string | null {
+  const at = anchorTile(parent, seats);
+  return at ? closestFreeSeat(seats, at.col, at.row) : null;
+}
+
 /** Free seat closest (Manhattan) to a tile — seats teammates beside their lead. */
 export function closestFreeSeat(
   seats: ReadonlyMap<string, SeatLike>,

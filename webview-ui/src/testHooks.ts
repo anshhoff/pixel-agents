@@ -14,6 +14,7 @@ declare global {
         bubbleType: 'permission' | 'waiting' | null;
         waitingAwaitingInput?: boolean;
         isHeadless?: boolean;
+        isSleeping?: boolean;
         isGreeter?: boolean;
       }>;
       /** The character the camera follows (null = free camera). */
@@ -151,6 +152,7 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
       bubbleType: ch.bubbleType,
       waitingAwaitingInput: ch.waitingAwaitingInput,
       isHeadless: ch.isHeadless,
+      isSleeping: ch.isSleeping,
       isGreeter: ch.isGreeter,
     }));
   };

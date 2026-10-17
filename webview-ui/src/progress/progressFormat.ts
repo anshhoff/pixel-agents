@@ -25,6 +25,23 @@ export function formatWait(ms: number): string {
   return `${hours}h ${String(totalMin % 60).padStart(2, '0')}m`;
 }
 
+/** How long a sleeping agent has been idle, coarsely, so it reads at a glance
+ *  from across the room: '<1m', '14m', '3h', '2d'. Floors, never negative. */
+export function formatIdle(ms: number): string {
+  const totalMin = Math.max(0, Math.floor(ms / 60_000));
+  if (totalMin < 1) return '<1m';
+  if (totalMin < 60) return `${totalMin}m`;
+  const hours = Math.floor(totalMin / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/** A sleeping agent's label: '💤 idle 3h', or just '💤 idle' when the server
+ *  didn't say since when. */
+export function sleepLabel(idleSince: number | undefined, now: number): string {
+  return idleSince === undefined ? '💤 idle' : `💤 idle ${formatIdle(now - idleSince)}`;
+}
+
 /** Active time as hours with one decimal: '0.4 h', '5.2 h'. */
 export function formatHours(activeMs: number): string {
   return `${(Math.max(0, activeMs) / 3_600_000).toFixed(1)} h`;

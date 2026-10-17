@@ -101,6 +101,12 @@ export function updateCharacter(
 
   switch (ch.state) {
     case CharacterState.TYPE: {
+      // Asleep (open but idle session): sit still — no typing frames, no
+      // standing up to wander — until it wakes or work resumes.
+      if (ch.isSleeping && !ch.isActive) {
+        ch.frameTimer = 0;
+        break;
+      }
       if (ch.frameTimer >= TYPE_FRAME_DURATION_SEC) {
         ch.frameTimer -= TYPE_FRAME_DURATION_SEC;
         ch.frame = (ch.frame + 1) % 2;
@@ -126,13 +132,15 @@ export function updateCharacter(
       // No idle animation — static pose
       ch.frame = 0;
       if (ch.seatTimer < 0) ch.seatTimer = 0; // clear turn-end sentinel
-      // If became active, pathfind to seat
-      if (ch.isActive) {
+      // If became active — or fell asleep — pathfind to seat
+      if (ch.isActive || ch.isSleeping) {
         if (!ch.seatId) {
-          // No seat assigned — type in place
-          ch.state = CharacterState.TYPE;
-          ch.frame = 0;
-          ch.frameTimer = 0;
+          // No seat assigned — type in place (a seatless sleeper just stands)
+          if (ch.isActive) {
+            ch.state = CharacterState.TYPE;
+            ch.frame = 0;
+            ch.frameTimer = 0;
+          }
           break;
         }
         const seat = seats.get(ch.seatId);
@@ -290,8 +298,8 @@ export function updateCharacter(
         ch.moveProgress = 0;
       }
 
-      // If became active while wandering, repath to seat
-      if (ch.isActive && ch.seatId) {
+      // If became active (or fell asleep) while wandering, repath to seat
+      if ((ch.isActive || ch.isSleeping) && ch.seatId) {
         const seat = seats.get(ch.seatId);
         if (seat) {
           const lastStep = ch.path[ch.path.length - 1];

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   AgentProgress,
+  AgentSleep,
   DailyStats,
   HooksConsentRequest,
   WorkPhase,
@@ -95,6 +96,10 @@ export interface DirectorySaved {
 /** One agent's stage track + waiting clock (agentProgress), minus the envelope. */
 export type AgentProgressState = Omit<AgentProgress, 'type' | 'id'>;
 
+/** One agent's sleep (agentSleep), minus the envelope: its session is open but
+ *  idle, quiet since `idleSince` (epoch ms, when the server knows it). */
+export type AgentSleepState = Omit<AgentSleep, 'type' | 'id'>;
+
 interface ExtensionMessageState {
   agents: number[];
   selectedAgent: number | null;
@@ -108,6 +113,8 @@ interface ExtensionMessageState {
   subagentCharacters: SubagentCharacter[];
   /** Latest agentProgress per agent: replaced whole on every message. */
   agentProgress: Record<number, AgentProgressState>;
+  /** Agents the server reports sleeping (agentSleep); waking drops the entry. */
+  agentSleep: Record<number, AgentSleepState>;
   /** Latest dailyStats; null until the server sends the first one. */
   dailyStats: DailyStats | null;
   layoutReady: boolean;
@@ -202,6 +209,7 @@ export function useExtensionMessages(
   >({});
   const [subagentCharacters, setSubagentCharacters] = useState<SubagentCharacter[]>([]);
   const [agentProgress, setAgentProgress] = useState<Record<number, AgentProgressState>>({});
+  const [agentSleep, setAgentSleep] = useState<Record<number, AgentSleepState>>({});
   const [dailyStats, setDailyStats] = useState<DailyStats | null>(null);
   const [layoutReady, setLayoutReady] = useState(false);
   const [layoutWasReset, setLayoutWasReset] = useState(false);
@@ -421,6 +429,8 @@ export function useExtensionMessages(
         setAgentSeenActivity((prev) => omitKey(prev, id));
         setSubagentTools((prev) => omitKey(prev, id));
         setAgentProgress((prev) => omitKey(prev, id));
+        setAgentSleep((prev) => omitKey(prev, id));
+        os.sleepingAgents.delete(id);
         // Remove all sub-agent characters belonging to this agent
         delete backgroundParentToolIdsRef.current[id];
         os.removeAllSubagents(id);
@@ -880,6 +890,17 @@ export function useExtensionMessages(
           waitingSince: typeof msg.waitingSince === 'number' ? msg.waitingSince : undefined,
         };
         setAgentProgress((prev) => ({ ...prev, [id]: progress }));
+      } else if (msg.type === 'agentSleep') {
+        // Sent on every change and, for every sleeping agent, on connect — which
+        // can be before its character exists (existingAgents buffering), so the
+        // office keeps the flag by id and applies it when the character arrives.
+        const id = msg.id as number;
+        const sleeping = msg.sleeping === true;
+        const idleSince = typeof msg.idleSince === 'number' ? msg.idleSince : undefined;
+        os.setAgentSleeping(id, sleeping);
+        setAgentSleep((prev) =>
+          sleeping ? { ...prev, [id]: { sleeping, idleSince } } : omitKey(prev, id),
+        );
       } else if (msg.type === 'dailyStats') {
         setDailyStats({
           type: 'dailyStats',
@@ -923,6 +944,7 @@ export function useExtensionMessages(
     subagentTools,
     subagentCharacters,
     agentProgress,
+    agentSleep,
     dailyStats,
     layoutReady,
     layoutWasReset,
