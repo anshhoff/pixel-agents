@@ -25,10 +25,19 @@ import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import { getSignalsHub } from './signals/registry.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
+
+/** What a read-only office may send: messages that only read. Everything else
+ *  is refused at the top of handleClientMessage. */
+const READ_ONLY_ALLOWED: ReadonlySet<unknown> = new Set([
+  'webviewReady',
+  // Tap-for-timeline: one agent's recent actions, sent back to the asker only.
+  'requestTimeline',
+]);
 
 /** Async hook toggle side effect (install/uninstall + script copy). Provided by cli.ts. */
 export type SetHooksEnabledSideEffect = (
@@ -128,7 +137,7 @@ export function handleClientMessage(
   // Tokenless is read-only. Refused HERE, once, rather than per message, so a
   // message type added later is privileged by default instead of open until
   // someone remembers to gate it.
-  if (!ctx.privileged && msg.type !== 'webviewReady') {
+  if (!ctx.privileged && !READ_ONLY_ALLOWED.has(msg.type)) {
     refuseReadOnly(msg, send, ctx);
     return;
   }
@@ -180,6 +189,13 @@ export function handleClientMessage(
       // Point-to-point reply to the requesting socket (NOT a broadcast).
       send({ type: 'agentDiagnostics', agents: buildAgentDiagnostics(store) });
       break;
+
+    case 'requestTimeline': {
+      // Point-to-point too: only the client that tapped the character asked.
+      const timeline = getSignalsHub()?.timelineMessage(store, msg.id);
+      if (timeline) send({ ...timeline });
+      break;
+    }
 
     case 'saveLayout':
       if (msg.layout) {

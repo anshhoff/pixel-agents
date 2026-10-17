@@ -1,5 +1,6 @@
 import type { AgentStateStore } from './agentStateStore.js';
 import { getLocalSessionWatcher } from './localSessions.js';
+import { getSignalsHub } from './signals/registry.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { getProgressTracker } from './transcriptParser.js';
 
@@ -104,6 +105,14 @@ export function resendAgentActivity(
   const sleep = getLocalSessionWatcher();
   if (sleep?.tracks(store)) {
     for (const message of sleep.snapshot()) {
+      send({ ...message });
+    }
+  }
+
+  // Useful signals: trouble and loops in force, today's tokens, the notice board.
+  const signals = getSignalsHub();
+  if (signals?.tracks(store)) {
+    for (const message of signals.snapshot()) {
       send({ ...message });
     }
   }

@@ -6,6 +6,7 @@ import { SESSION_END_GRACE_MS } from './constants.js';
 import type { ProgressTracker } from './progress/progressTracker.js';
 import { type RemoteSource, remoteSourceOf } from './remoteSource.js';
 import type { SessionRouter } from './sessionRouter.js';
+import { getSignalsHub } from './signals/registry.js';
 import { getInlineTeammates, hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import { notifyBackgroundAgentCompleted } from './transcriptParser.js';
@@ -467,6 +468,7 @@ export class HookEventHandler {
     const toolInput = (normEvent.input as Record<string, unknown> | undefined) ?? {};
     // Counted before the display suppression below: the tool ran either way.
     this.progress?.onToolStart(agentId, toolName, toolInput);
+    getSignalsHub()?.onToolStart(this.agents, agentId, toolName, toolInput, normEvent.toolId);
     const status = this.provider.formatToolStatus(toolName, toolInput);
     const hookToolId = toolUseId ?? `hook-${Date.now()}`;
     if (toolUseId) {
@@ -548,6 +550,8 @@ export class HookEventHandler {
         },
       );
     }
+    // Trouble (failed tools in a row) and the timeline read the raw payload too.
+    getSignalsHub()?.onHookToolEnd(this.agents, agentId, event);
     if (toolUseId) {
       const toolName = agent.activeToolNames.get(toolUseId);
       agent.activeToolIds.delete(toolUseId);

@@ -58,6 +58,7 @@ import {
   hookProviders,
 } from '../../server/src/providers/index.js';
 import { PixelAgentsServer } from '../../server/src/server.js';
+import { getSignalsHub } from '../../server/src/signals/registry.js';
 import {
   getProjectDirPath,
   launchNewTerminal,
@@ -923,6 +924,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           }
         })();
         sendExistingAgents(this.store, this.adapter, this.webview);
+      } else if (message.type === 'requestTimeline') {
+        // Tap-for-timeline: one agent's recent actions, back to this webview.
+        const timeline = getSignalsHub()?.timelineMessage(this.store, message.id);
+        if (timeline) this.webview?.postMessage(timeline);
       } else if (message.type === 'requestDiagnostics') {
         // Send connection diagnostics for all agents to the Debug View
         this.webview?.postMessage({

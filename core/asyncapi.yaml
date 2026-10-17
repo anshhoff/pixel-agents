@@ -111,6 +111,12 @@ components:
         - $ref: '#/components/schemas/TaskUpdated'
         - $ref: '#/components/schemas/ReportReady'
         - $ref: '#/components/schemas/Report'
+        # Useful signals: trouble, loops, timeline, tokens, notice board
+        - $ref: '#/components/schemas/AgentTrouble'
+        - $ref: '#/components/schemas/AgentLoop'
+        - $ref: '#/components/schemas/AgentTimeline'
+        - $ref: '#/components/schemas/DailyTokens'
+        - $ref: '#/components/schemas/NoticeBoard'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -173,6 +179,8 @@ components:
         - $ref: '#/components/schemas/RequestTasks'
         - $ref: '#/components/schemas/RequestReport'
         - $ref: '#/components/schemas/WriteReportNow'
+        # Useful signals
+        - $ref: '#/components/schemas/RequestTimeline'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -741,6 +749,185 @@ components:
         activeMs:
           type: integer
           description: Time agents spent working (not waiting on the user), summed.
+
+    TroubleLevel:
+      type: string
+      enum: [none, fire, alarm]
+
+    AgentTrouble:
+      description: |
+        Consecutive failed tools (PostToolUseFailure, or a shell command that exited
+        non-zero or was interrupted). `fire` from the first failure, `alarm` from
+        the third in a row; `none` (failures 0) once a tool succeeds. Sent on every
+        change and, for every agent in trouble, when a client connects.
+      type: object
+      additionalProperties: false
+      required: [type, id, level, failures]
+      properties:
+        type:
+          const: agentTrouble
+        id:
+          type: integer
+        level:
+          $ref: '#/components/schemas/TroubleLevel'
+        failures:
+          type: integer
+
+    LoopReason:
+      type: string
+      enum: [repeat, stall]
+
+    AgentLoop:
+      description: |
+        Whether an agent looks like it is going in circles: the same tool with the
+        same input 4+ times within 10 min (`repeat`), or 15 min of active work with
+        no new file edited and no phase change (`stall`). Cleared (looping false) on
+        progress. Sent on every change and, for every looping agent, when a client connects.
+      type: object
+      additionalProperties: false
+      required: [type, id, looping]
+      properties:
+        type:
+          const: agentLoop
+        id:
+          type: integer
+        looping:
+          type: boolean
+        reason:
+          $ref: '#/components/schemas/LoopReason'
+
+    TimelineKind:
+      type: string
+      enum: [tool, status, ship, pr, push]
+
+    TimelineEntry:
+      description: One recent action. `text` is the activity label (never a raw tool input).
+      type: object
+      additionalProperties: false
+      required: [at, kind, text]
+      properties:
+        at:
+          type: integer
+          description: Epoch ms.
+        kind:
+          $ref: '#/components/schemas/TimelineKind'
+        text:
+          type: string
+        failed:
+          type: boolean
+          description: A tool that failed.
+
+    AgentTimeline:
+      description: |
+        One agent's last actions (oldest first, at most 20), its PRs and pushes today,
+        and its active time today. In reply to requestTimeline, to the requester only.
+      type: object
+      additionalProperties: false
+      required: [type, id, entries, prs, pushes, activeMs]
+      properties:
+        type:
+          const: agentTimeline
+        id:
+          type: integer
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimelineEntry'
+        prs:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyPr'
+        pushes:
+          type: integer
+        activeMs:
+          type: integer
+
+    ModelTokens:
+      description: One model's token usage today.
+      type: object
+      additionalProperties: false
+      required: [input, output, cacheRead, cacheWrite]
+      properties:
+        input:
+          type: integer
+        output:
+          type: integer
+        cacheRead:
+          type: integer
+        cacheWrite:
+          type: integer
+        estimatedUsd:
+          type: number
+          description: Estimated list-price cost. Absent for a model without a known price.
+
+    DailyTokens:
+      description: |
+        Today's token usage across every agent, summed from transcript usage records
+        (local day, survives server restarts). `estimatedUsd` is an estimate at API
+        list prices, absent when no model had a known price; `partialEstimate` is
+        true when some tokens came from a model without one. Sent on every change
+        and when a client connects.
+      type: object
+      additionalProperties: false
+      required: [type, date, input, output, cacheRead, cacheWrite, byModel]
+      properties:
+        type:
+          const: dailyTokens
+        date:
+          type: string
+          description: Local date, YYYY-MM-DD.
+        input:
+          type: integer
+        output:
+          type: integer
+        cacheRead:
+          type: integer
+        cacheWrite:
+          type: integer
+        byModel:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ModelTokens'
+        estimatedUsd:
+          type: number
+        partialEstimate:
+          type: boolean
+
+    NoticeKind:
+      type: string
+      enum: [pr, issue]
+
+    NoticeItem:
+      description: An open PR (authored) or issue (assigned) on GitHub. Titles only.
+      type: object
+      additionalProperties: false
+      required: [kind, title, repo, url]
+      properties:
+        kind:
+          $ref: '#/components/schemas/NoticeKind'
+        title:
+          type: string
+        repo:
+          type: string
+          description: owner/name.
+        url:
+          type: string
+
+    NoticeBoard:
+      description: |
+        Open PRs and issues for the repos seen today or the user's own, from `gh`
+        (polled every 10 min, only while `gh` is signed in). Sent on change and
+        when a client connects.
+      type: object
+      additionalProperties: false
+      required: [type, items]
+      properties:
+        type:
+          const: noticeBoard
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NoticeItem'
 
     LayoutLoaded:
       description: |
@@ -1638,6 +1825,17 @@ components:
       properties:
         type:
           const: writeReportNow
+
+    RequestTimeline:
+      description: Ask for one agent's recent actions (server responds with agentTimeline). Allowed for read-only clients.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: requestTimeline
+        id:
+          type: integer
 
     # ── Supporting schemas ─────────────────────────────────────────
 

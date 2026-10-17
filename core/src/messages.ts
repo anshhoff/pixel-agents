@@ -34,6 +34,11 @@ export type ServerMessage =
   | TaskUpdated
   | ReportReady
   | Report
+  | AgentTrouble
+  | AgentLoop
+  | AgentTimeline
+  | DailyTokens
+  | NoticeBoard
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -87,7 +92,8 @@ export type ClientMessage =
   | RequestDiagnostics
   | RequestTasks
   | RequestReport
-  | WriteReportNow;
+  | WriteReportNow
+  | RequestTimeline;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -317,6 +323,76 @@ export interface Report {
   aiWritten?: boolean;
   writing?: boolean;
 }
+
+export interface AgentTrouble {
+  type: 'agentTrouble';
+  id: number;
+  level: TroubleLevel;
+  failures: number;
+}
+
+export type TroubleLevel = 'none' | 'fire' | 'alarm';
+
+export interface AgentLoop {
+  type: 'agentLoop';
+  id: number;
+  looping: boolean;
+  reason?: LoopReason;
+}
+
+export type LoopReason = 'repeat' | 'stall';
+
+export interface AgentTimeline {
+  type: 'agentTimeline';
+  id: number;
+  entries: TimelineEntry[];
+  prs: DailyPr[];
+  pushes: number;
+  activeMs: number;
+}
+
+export interface TimelineEntry {
+  at: number;
+  kind: TimelineKind;
+  text: string;
+  failed?: boolean;
+}
+
+export type TimelineKind = 'tool' | 'status' | 'ship' | 'pr' | 'push';
+
+export interface DailyTokens {
+  type: 'dailyTokens';
+  date: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  byModel: Record<string, ModelTokens>;
+  estimatedUsd?: number;
+  partialEstimate?: boolean;
+}
+
+export interface ModelTokens {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  estimatedUsd?: number;
+}
+
+export interface NoticeBoard {
+  type: 'noticeBoard';
+  items: NoticeItem[];
+}
+
+export interface NoticeItem {
+  kind: NoticeKind;
+  title: string;
+  repo: string;
+  url: string;
+}
+
+export type NoticeKind = 'pr' | 'issue';
 
 export interface LayoutLoaded {
   type: 'layoutLoaded';
@@ -645,4 +721,9 @@ export interface RequestReport {
 
 export interface WriteReportNow {
   type: 'writeReportNow';
+}
+
+export interface RequestTimeline {
+  type: 'requestTimeline';
+  id: number;
 }
