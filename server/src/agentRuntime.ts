@@ -15,6 +15,7 @@ import * as path from 'path';
 import type { HookProvider } from '../../core/src/provider.js';
 import { createAgentState } from './agentState.js';
 import type { AgentStateStore } from './agentStateStore.js';
+import { REMOTE_AGENT_TTL_MS, REMOTE_EXPIRY_CHECK_INTERVAL_MS } from './constants.js';
 import { DismissalTracker } from './dismissalTracker.js';
 import {
   adoptExternalSessionFromHook,
@@ -73,6 +74,7 @@ export class AgentRuntime {
   readonly activeAgentId = { current: null as number | null };
   private externalScanTimer: ReturnType<typeof setInterval> | null = null;
   private staleCheckTimer: ReturnType<typeof setInterval> | null = null;
+  private remoteExpiryTimer: ReturnType<typeof setInterval> | null = null;
 
   // Configuration refs (mutable, shared with scanners)
   readonly watchAllSessions = { current: false };
@@ -153,7 +155,27 @@ export class AgentRuntime {
 
     // Wire hook lifecycle callbacks to shared agent operations
     this.hookEventHandler.setLifecycleCallbacks({
-      onExternalSessionDetected: (sessionId, transcriptPath, cwd) => {
+      onExternalSessionDetected: (sessionId, transcriptPath, cwd, remote) => {
+        if (remote) {
+          // Relayed from another machine: its relay key is the opt-in, so Watch All
+          // Sessions doesn't apply, and its transcript isn't on this disk.
+          adoptExternalSessionFromHook(
+            sessionId,
+            undefined,
+            cwd,
+            this.knownJsonlFiles,
+            this.store.nextAgentId,
+            this.store,
+            this.fileWatchers,
+            this.pollingTimers,
+            this.waitingTimers,
+            this.permissionTimers,
+            () => this.store.persist(),
+            (agent) => this.registerAgent(agent.sessionId, agent.id),
+            remote,
+          );
+          return;
+        }
         const projectDir = transcriptPath ? path.dirname(transcriptPath) : cwd;
         // Teammate session of a tracked lead? Attach it as a teammate character
         // instead of adopting a generic external agent -- and regardless of the
@@ -462,6 +484,22 @@ export class AgentRuntime {
       this.knownJsonlFiles,
       this.hooksEnabled,
     );
+    this.remoteExpiryTimer = setInterval(
+      () => this.expireRemoteAgents(),
+      REMOTE_EXPIRY_CHECK_INTERVAL_MS,
+    );
+  }
+
+  /** Remove remote agents with no event for REMOTE_AGENT_TTL_MS. */
+  expireRemoteAgents(now = Date.now()): void {
+    for (const [id, agent] of [...this.store]) {
+      if (!agent.remoteSource || now - agent.lastDataAt <= REMOTE_AGENT_TTL_MS) continue;
+      console.log(
+        `[Pixel Agents] Agent ${id} - remote session from ${agent.remoteSource.label} silent, removing`,
+      );
+      this.unregisterAgent(agent.sessionId);
+      this.removeAgent(id);
+    }
   }
 
   // ── Restore persisted external agents (standalone) ──
@@ -570,6 +608,10 @@ export class AgentRuntime {
     if (this.staleCheckTimer) {
       clearInterval(this.staleCheckTimer);
       this.staleCheckTimer = null;
+    }
+    if (this.remoteExpiryTimer) {
+      clearInterval(this.remoteExpiryTimer);
+      this.remoteExpiryTimer = null;
     }
 
     for (const id of [...this.store.keys()]) {

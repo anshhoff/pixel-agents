@@ -1,5 +1,7 @@
 import type * as vscode from 'vscode';
 
+import type { RemoteSource } from './remoteSource.js';
+
 export interface AgentState {
   id: number;
   sessionId: string;
@@ -32,6 +34,9 @@ export interface AgentState {
   hookDelivered: boolean;
   /** True when agent has no transcript file (provider doesn't use JSONL). All state from hooks. */
   hooksOnly?: boolean;
+  /** Set for sessions ingested through remote/relay (another computer or the cloud).
+   *  Always hooksOnly: the transcript lives on the other machine. */
+  remoteSource?: RemoteSource;
   /** Provider that created this agent (defaults to 'claude') */
   providerId?: string;
   /** Set when SessionEnd(reason=clear) fires; cleared when SessionStart(source=clear) reassigns */

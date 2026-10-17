@@ -46,6 +46,7 @@ import { seedContextUsage } from './contextUsage.js';
 import type { DismissalTracker } from './dismissalTracker.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { pathsMatch } from './pathKey.js';
+import type { RemoteSource } from './remoteSource.js';
 import type { SubagentWatch } from './subagentWatch.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
 import { getHookProvider, processTranscriptLine } from './transcriptParser.js';
@@ -1024,6 +1025,7 @@ export function adoptExternalSessionFromHook(
 
   persistAgents: () => void,
   onAgentCreated?: (agent: AgentState) => void,
+  remoteSource?: RemoteSource,
 ): void {
   if (transcriptPath) {
     // File-based provider (Claude, Codex): adopt with JSONL file watching
@@ -1081,6 +1083,7 @@ export function adoptExternalSessionFromHook(
       hooksOnly: true,
       lastDataAt: Date.now(),
       directoryName,
+      remoteSource,
     });
     assignPaletteIfNeeded(agent, agents);
     agents.set(id, agent);
@@ -1495,6 +1498,9 @@ export function startStaleExternalAgentCheck(
 
     for (const [id, agent] of agents) {
       if (!agent.isExternal) continue;
+      // Remote transcripts live on another machine; the relay keeps delivering
+      // their hooks either way. AgentRuntime.expireRemoteAgents handles them.
+      if (agent.remoteSource) continue;
 
       // Only despawn if the JSONL file has been deleted from disk.
       // Inactive external agents stay alive so they can resume when

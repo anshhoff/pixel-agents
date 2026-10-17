@@ -109,6 +109,10 @@ export const HOOK_EVENT_BUFFER_MS = 5_000;
  *  the agent is cleaned up instead of staying as a zombie with pendingClear forever. */
 export const SESSION_END_GRACE_MS = 2000;
 export const MAX_HOOK_BODY_SIZE = 65_536; // 64KB
+/** A remote (relay-ingested) agent silent this long is removed: a sleeping
+ *  laptop or a killed cloud VM never sends SessionEnd. */
+export const REMOTE_AGENT_TTL_MS = 3 * 60 * 60 * 1000;
+export const REMOTE_EXPIRY_CHECK_INTERVAL_MS = 60_000;
 
 // ── Standalone Embedded Terminal ────────────────────────────
 /** PTY module ids tried in order by the loader. @lydell/node-pty ships prebuilt
