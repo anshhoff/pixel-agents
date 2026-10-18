@@ -33,7 +33,7 @@ import * as path from 'path';
 import * as readline from 'readline';
 
 import { repoOf } from '../tasks/taskLedger.js';
-import { repoNameForCwd } from '../transcriptCwd.js';
+import { repoNameForCwdOnDisk } from '../transcriptCwd.js';
 import {
   TOKENS_BACKFILL_MAX_DEPTH,
   TOKENS_BACKFILL_SUFFIX,
@@ -223,7 +223,7 @@ function dateMs(date: string): number {
 /**
  * Stream one transcript from `from.offset`, folding each assistant record's
  * usage on a wanted day into `found`. A record's repo is its cwd's repo
- * (repoNameForCwd); one without a cwd takes the first the file named, else
+ * (repoNameForCwdOnDisk); one without a cwd takes the first the file named, else
  * `unknown`. Malformed lines are skipped. Returns where the next read should
  * start: after the last whole line, so a record still being written at the
  * tail is read whole next time instead of half now.
@@ -258,7 +258,7 @@ export async function scanTranscript(
         continue;
       }
       if (typeof record?.cwd === 'string' && record.cwd) {
-        fileRepo ??= repoOf({ directoryName: repoNameForCwd(record.cwd) });
+        fileRepo ??= repoOf({ directoryName: repoNameForCwdOnDisk(record.cwd) });
       }
       const usage = usageOf(record);
       if (!usage) continue;
@@ -268,7 +268,7 @@ export async function scanTranscript(
       if (!wanted.has(date)) continue;
       const repo =
         typeof record.cwd === 'string' && record.cwd
-          ? repoOf({ directoryName: repoNameForCwd(record.cwd) })
+          ? repoOf({ directoryName: repoNameForCwdOnDisk(record.cwd) })
           : (fileRepo ?? repoOf({}));
       let day = found.get(date);
       if (!day) found.set(date, (day = new Map()));

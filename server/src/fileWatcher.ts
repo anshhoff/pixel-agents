@@ -49,7 +49,7 @@ import { pathsMatch } from './pathKey.js';
 import type { RemoteSource } from './remoteSource.js';
 import type { SubagentWatch } from './subagentWatch.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
-import { cwdFromTranscript, repoNameForCwd } from './transcriptCwd.js';
+import { cwdFromTranscript, repoNameForCwdOnDisk } from './transcriptCwd.js';
 import { getHookProvider, processTranscriptLine } from './transcriptParser.js';
 import { readLatestAiTitle, seedAgentTitle } from './transcriptTitle.js';
 import type { AgentState } from './types.js';
@@ -629,7 +629,9 @@ function directoryNameForTranscript(
   const cwd = hookCwd || cwdFromTranscript(jsonlFile);
   const resolved = directoryNameResolver?.({ cwd, projectDir });
   if (resolved !== undefined) return resolved;
-  return (cwd && repoNameForCwd(cwd)) || directoryNameFromProjectDir(path.basename(projectDir));
+  return (
+    (cwd && repoNameForCwdOnDisk(cwd)) || directoryNameFromProjectDir(path.basename(projectDir))
+  );
 }
 
 /**
@@ -641,7 +643,7 @@ function directoryNameForTranscript(
 export function restoredDirectoryName(jsonlFile: string): string | undefined {
   if (directoryNameResolver) return undefined;
   const cwd = cwdFromTranscript(jsonlFile);
-  return (cwd && repoNameForCwd(cwd)) || undefined;
+  return (cwd && repoNameForCwdOnDisk(cwd)) || undefined;
 }
 
 /**
@@ -1105,7 +1107,7 @@ export function adoptExternalSessionFromHook(
     // Hooks-only provider (OpenCode, Copilot): no transcript file, all state from hooks
     const id = nextAgentIdRef.current++;
     const directoryName =
-      directoryNameResolver?.({ cwd }) ?? (cwd ? repoNameForCwd(cwd) : undefined);
+      directoryNameResolver?.({ cwd }) ?? (cwd ? repoNameForCwdOnDisk(cwd) : undefined);
     const agent = createAgentState({
       id,
       sessionId,

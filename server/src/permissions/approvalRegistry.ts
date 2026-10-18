@@ -6,7 +6,7 @@ import type {
 } from '../../../core/src/messages.js';
 import type { AgentStateStore } from '../agentStateStore.js';
 import { remoteSourceOf } from '../remoteSource.js';
-import { repoNameForCwd } from '../transcriptCwd.js';
+import { repoNameForCwdOnDisk } from '../transcriptCwd.js';
 import {
   PERMISSION_AGENT_RESOLVE_MS,
   PERMISSION_AGENT_RESOLVE_POLL_MS,
@@ -260,7 +260,7 @@ export class PermissionApprovals {
 
   private repoOf(req: PendingRequest): string {
     const agent = req.agentId !== undefined ? this.options.store.get(req.agentId) : undefined;
-    return agent?.directoryName || (req.cwd ? repoNameForCwd(req.cwd) : '') || '?';
+    return agent?.directoryName || (req.cwd ? repoNameForCwdOnDisk(req.cwd) : '') || '?';
   }
 
   /** Settle a request exactly once: stop its timer, drop it, answer the wait,

@@ -9,6 +9,7 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 
 /** How much of a transcript's head is searched for a cwd. Every user/assistant
  *  record carries one, so it turns up within the first few records; the cap
@@ -68,4 +69,38 @@ export function repoNameForCwd(cwd: string): string {
     if (parts[i] === '.worktrees') return parts[i - 1];
   }
   return parts[parts.length - 1] ?? '';
+}
+
+/** Directories already named by repoNameForCwdOnDisk. */
+const checkoutNames = new Map<string, string>();
+/** Past this many, the cache starts over (a long-running board sees new dirs). */
+const CHECKOUT_NAMES_MAX = 5_000;
+
+/**
+ * repoNameForCwd, plus: a directory inside a git checkout counts as the
+ * checkout -- the nearest folder up from it holding `.git` -- so a session
+ * that ran in `hobbyfi-video-automation/assets` is `hobbyfi-video-automation`,
+ * not `assets`. A cwd outside any checkout (or gone from disk) keeps its
+ * basename. Cached per cwd: the walk touches the disk.
+ */
+export function repoNameForCwdOnDisk(cwd: string): string {
+  const cached = checkoutNames.get(cwd);
+  if (cached !== undefined) return cached;
+  const folded = repoNameForCwd(cwd);
+  let name = folded;
+  // A worktree pattern already named the repo; otherwise look for the checkout.
+  if (folded === path.basename(cwd)) {
+    for (let dir = cwd; ;) {
+      if (fs.existsSync(path.join(dir, '.git'))) {
+        name = repoNameForCwd(dir);
+        break;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  if (checkoutNames.size >= CHECKOUT_NAMES_MAX) checkoutNames.clear();
+  checkoutNames.set(cwd, name);
+  return name;
 }

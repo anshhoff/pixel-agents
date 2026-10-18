@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { repoNameForCwd } from '../src/transcriptCwd.js';
+import { repoNameForCwd, repoNameForCwdOnDisk } from '../src/transcriptCwd.js';
 
 /**
  * Helper agents run in git worktrees kept inside the repo. Their labels,
@@ -34,5 +37,37 @@ describe('repoNameForCwd', () => {
   it('leaves a directory that only looks like one alone', () => {
     expect(repoNameForCwd('/srv/worktrees/app')).toBe('app');
     expect(repoNameForCwd('/home/me/.claude')).toBe('.claude');
+  });
+});
+
+describe('repoNameForCwdOnDisk', () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-checkout-'));
+  });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  it('names a folder inside a checkout after the checkout', () => {
+    const repo = path.join(tmp, 'hobbyfi-video-automation');
+    fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+    fs.mkdirSync(path.join(repo, 'assets', 'audio'), { recursive: true });
+    expect(repoNameForCwdOnDisk(path.join(repo, 'assets', 'audio'))).toBe(
+      'hobbyfi-video-automation',
+    );
+    expect(repoNameForCwdOnDisk(repo)).toBe('hobbyfi-video-automation');
+  });
+
+  it("keeps a worktree's repo, whose own .git is a file", () => {
+    const wt = path.join(tmp, 'pixel-agents', '.worktrees', 'phase-g');
+    fs.mkdirSync(wt, { recursive: true });
+    fs.writeFileSync(path.join(wt, '.git'), 'gitdir: elsewhere');
+    expect(repoNameForCwdOnDisk(path.join(wt))).toBe('pixel-agents');
+  });
+
+  it('keeps the basename outside any checkout, or for a folder gone from disk', () => {
+    fs.mkdirSync(path.join(tmp, 'scratch'));
+    expect(repoNameForCwdOnDisk(path.join(tmp, 'scratch'))).toBe('scratch');
+    expect(repoNameForCwdOnDisk(path.join(tmp, 'deleted-long-ago'))).toBe('deleted-long-ago');
   });
 });
