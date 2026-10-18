@@ -5,6 +5,9 @@ import {
   ANSH_STRETCH_RADIUS_TILES,
   ANSH_STRETCH_STAY_SEC,
   ANSH_VISIT_STAY_SEC,
+  ANSH_WANDER_MIN_SEC,
+  ANSH_WANDER_RANGE_SEC,
+  ANSH_WANDER_STAY_SEC,
   ASHTRAY_BUTT_SLOTS,
   AUTO_ON_FACING_DEPTH,
   AUTO_ON_SIDE_DEPTH,
@@ -189,6 +192,11 @@ export class OfficeState {
   nowMs: () => number = () => Date.now();
   /** The mid-work break chance's RNG ([0, 1), like Math.random). Tests seed it. */
   zoneRandom: () => number = () => Math.random();
+  /** Ansh's between-thoughts wander: when, and where. Tests replace it. */
+  anshWanderRandom: () => number = () => Math.random();
+  /** Seconds Ansh has sat at his desk, and how long he sits before wandering. */
+  private anshDeskSec = 0;
+  private anshWanderAfterSec: number | null = null;
   /** Phase B: bells, confetti and the trophy wall's tally (celebrations.ts). */
   readonly celebrations = new Celebrations();
 
@@ -2115,6 +2123,7 @@ export class OfficeState {
 
     // Phase M: Ansh at the desk, the Manager (and its report-time visit).
     this.npcs.update(dt, this);
+    this.tickAnshWander(dt);
 
     // ── Pet FSM ────────────────────────────────────────────────
     for (const pet of this.pets) {
@@ -2202,16 +2211,10 @@ export class OfficeState {
         near = lookAt();
         staySec = ANSH_CHAT_STAY_SEC;
         break;
-      case 'stretch': {
-        const r = ANSH_STRETCH_RADIUS_TILES;
-        const around = this.walkableTiles.filter(
-          (t) => Math.abs(t.col - ansh.tileCol) + Math.abs(t.row - ansh.tileRow) <= r,
-        );
-        if (around.length === 0) return false;
-        near = around[Math.floor(random() * around.length)];
+      case 'stretch':
+        near = this.anshStretchSpot(ansh, random);
         staySec = ANSH_STRETCH_STAY_SEC;
         break;
-      }
       case 'stay':
         return false;
     }
@@ -2219,6 +2222,61 @@ export class OfficeState {
     const spot = this.closestFreeWalkableTile(near.col, near.row);
     if (!spot) return false;
     return this.npcs.startAnshErrand(spot, staySec, lookAt);
+  }
+
+  /**
+   * Between thoughts: a wander of his own (no claude, nothing said) -- to a
+   * place in the Café, the Lounge or the Server room, or a stretch nearby --
+   * stay a while, walk back. False (he stays seated) without an Ansh or a spot.
+   */
+  anshWander(random: () => number = this.anshWanderRandom): boolean {
+    const ansh = this.npcs.ansh;
+    if (!ansh) return false;
+    const places = [ZoneLabel.CAFE, ZoneLabel.LOUNGE, ZoneLabel.SERVER].flatMap(
+      (z) => this.zones.zones.get(z)?.places ?? [],
+    );
+    // One pick across the places plus the stretch, so a bigger lounge doesn't
+    // crowd out the rest any more than its seats would.
+    const pick = Math.floor(random() * (places.length + 1));
+    const place = places[pick];
+    const near = place ? { col: place.col, row: place.row } : this.anshStretchSpot(ansh, random);
+    if (!near) return false;
+    const spot = this.closestFreeWalkableTile(near.col, near.row);
+    if (!spot) return false;
+    return this.npcs.startAnshErrand(
+      spot,
+      place ? ANSH_WANDER_STAY_SEC : ANSH_STRETCH_STAY_SEC,
+      () => near,
+    );
+  }
+
+  /** A walkable tile within ANSH_STRETCH_RADIUS_TILES of Ansh, or null. */
+  private anshStretchSpot(
+    ansh: Character,
+    random: () => number,
+  ): { col: number; row: number } | null {
+    const r = ANSH_STRETCH_RADIUS_TILES;
+    const around = this.walkableTiles.filter(
+      (t) => Math.abs(t.col - ansh.tileCol) + Math.abs(t.row - ansh.tileRow) <= r,
+    );
+    return around.length > 0 ? around[Math.floor(random() * around.length)] : null;
+  }
+
+  /** Count Ansh's time at his desk; wander once he has sat long enough. Any
+   *  errand (a thought's included) resets the count, and he stays put while
+   *  the Manager is on its way to his desk. */
+  private tickAnshWander(dt: number): void {
+    if (!this.npcs.ansh || this.npcs.anshOut || this.npcs.visiting) {
+      this.anshDeskSec = 0;
+      return;
+    }
+    this.anshWanderAfterSec ??=
+      ANSH_WANDER_MIN_SEC + this.anshWanderRandom() * ANSH_WANDER_RANGE_SEC;
+    this.anshDeskSec += dt;
+    if (this.anshDeskSec < this.anshWanderAfterSec) return;
+    this.anshDeskSec = 0;
+    this.anshWanderAfterSec = null;
+    this.anshWander();
   }
 
   private buildNpcs(): OfficeNpcs {

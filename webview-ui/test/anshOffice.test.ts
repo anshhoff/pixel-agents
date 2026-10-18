@@ -17,6 +17,8 @@ import {
   ANSH_NPC_ID,
   ANSH_STRETCH_RADIUS_TILES,
   ANSH_VISIT_STAY_SEC,
+  ANSH_WANDER_MIN_SEC,
+  ANSH_WANDER_STAY_SEC,
   KNOCK_BOB_PX,
   KNOCK_INTERVAL_SEC,
   MANAGER_NPC_ID,
@@ -69,6 +71,7 @@ const LABELS: Record<string, string> = {
   E: 'Entrance',
   A: 'Ansh',
   G: 'Manager',
+  S: 'Server',
 };
 
 /** `W` wall, `.` unlabeled floor, a letter = floor in that Area. */
@@ -450,5 +453,81 @@ describe('Ansh’s thoughts, acted out', () => {
     expect(os.npcs.anshOut).toBe(false);
     expect(at(os.npcs.ansh!)).toEqual([3, 3]);
     expect(office(MAP_WITHOUT_ANSH).anshDo(thought({ action: 'chatManager' }))).toBe(false);
+  });
+});
+
+describe('Ansh wanders between thoughts', () => {
+  /** The same office with a Server room (no racks: any of its tiles) top-right. */
+  const MAP_WITH_SERVER = MAP.map((l, row) => (row === 1 ? 'WWWWWWWDDDDDSSSW' : l));
+  const inServer = (ch: Character) => ch.tileRow === 1 && ch.tileCol >= 12 && ch.tileCol <= 14;
+
+  it('walks to a place in the Server room, stays a while, and walks back to his desk', () => {
+    const os = office(MAP_WITH_SERVER);
+    expect(os.anshWander(() => 0)).toBe(true);
+    const a = os.npcs.ansh!;
+    let t = 0;
+    while (!(inServer(a) && a.state === CharacterState.IDLE && !a.path.length)) {
+      run(os, 0.1);
+      t += 0.1;
+      expect(t).toBeLessThan(20);
+    }
+    run(os, ANSH_WANDER_STAY_SEC - 0.5);
+    expect(inServer(a)).toBe(true);
+    run(os, 25);
+    expect(at(a)).toEqual([3, 3]);
+    expect(a.state).toBe(CharacterState.TYPE);
+    expect(os.npcs.anshOut).toBe(false);
+  });
+
+  it('stretches nearby when the office has nowhere to go', () => {
+    const os = office();
+    expect(os.anshWander(() => 0.5)).toBe(true);
+    expect(os.npcs.anshOut).toBe(true);
+    run(os, 30);
+    expect(at(os.npcs.ansh!)).toEqual([3, 3]);
+    expect(office(MAP_WITHOUT_ANSH).anshWander(() => 0)).toBe(false);
+  });
+
+  it('sets off on his own after sitting ANSH_WANDER_MIN_SEC at the shortest', () => {
+    const os = office(MAP_WITH_SERVER);
+    os.anshWanderRandom = () => 0;
+    run(os, ANSH_WANDER_MIN_SEC - 1);
+    expect(os.npcs.anshOut).toBe(false);
+    run(os, 2);
+    expect(os.npcs.anshOut).toBe(true);
+  });
+
+  it('stays at his desk while the Manager is coming to it', () => {
+    const os = office();
+    os.anshWanderRandom = () => 0;
+    // A second from wandering when the Manager sets off.
+    run(os, ANSH_WANDER_MIN_SEC - 1);
+    expect(os.startManagerVisit()).toBe(true);
+    let t = 0;
+    while (os.npcs.visiting) {
+      run(os, 0.1);
+      t += 0.1;
+      expect(os.npcs.anshOut).toBe(false);
+      expect(t).toBeLessThan(60);
+    }
+  });
+
+  it('a thought cuts into a wander', () => {
+    const os = office(MAP_WITH_SERVER);
+    const agent = agentAt(os, 1, 'd1');
+    expect(os.anshWander(() => 0)).toBe(true);
+    run(os, 1);
+    expect(os.anshDo({ at: 0, action: 'visit', targetId: 1, say: 'Hm.', aiWritten: true })).toBe(
+      true,
+    );
+    const a = os.npcs.ansh!;
+    let t = 0;
+    while (!(a.state === CharacterState.IDLE && !a.path.length)) {
+      run(os, 0.1);
+      t += 0.1;
+      expect(t).toBeLessThan(20);
+    }
+    const d = Math.abs(a.tileCol - agent.tileCol) + Math.abs(a.tileRow - agent.tileRow);
+    expect(d).toBeLessThanOrEqual(2);
   });
 });

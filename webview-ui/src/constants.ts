@@ -560,6 +560,12 @@ export const ANSH_CHAT_STAY_SEC = 8;
 export const ANSH_STRETCH_STAY_SEC = 3;
 export const ANSH_STRETCH_RADIUS_TILES = 6;
 export const ANSH_BUBBLE_MS = 9_000;
+/** Between thoughts Ansh wanders on his own (no claude): every MIN..MIN+RANGE
+ *  seconds at his desk he walks to the Café, the Lounge, the Server room or a
+ *  spot nearby, stays a while, and comes back. A thought cuts in at any point. */
+export const ANSH_WANDER_MIN_SEC = 60;
+export const ANSH_WANDER_RANGE_SEC = 90;
+export const ANSH_WANDER_STAY_SEC = 10;
 /** NPCs at their desks flip between two frames this often (slower than typing). */
 export const NPC_IDLE_FRAME_SEC = 0.6;
 /** On a report for today, the Manager stands by Ansh's desk this long. */
