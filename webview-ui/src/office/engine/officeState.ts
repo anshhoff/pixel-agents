@@ -22,6 +22,7 @@ import {
   WAITING_BUBBLE_DURATION_SEC,
   ZONE_RETRY_INTERVAL_SEC,
 } from '../../constants.js';
+import { FunDirector } from '../../fun/funDirector.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
   createDefaultLayout,
@@ -157,6 +158,8 @@ export class OfficeState {
   nowMs: () => number = () => Date.now();
   /** The mid-work break chance's RNG ([0, 1), like Math.random). Tests seed it. */
   zoneRandom: () => number = () => Math.random();
+  /** Fun (phases E/F): rituals, pastimes, decorations, smart pets (fun/funDirector.ts). */
+  readonly fun: FunDirector = new FunDirector(this);
 
   /**
    * directoryName → list of Area labels that Directory belongs to.
@@ -1175,16 +1178,18 @@ export class OfficeState {
 
     // ...and its ashtray fills with butts while people wait on the user.
     const butts = this.ashtrayButtInstances();
+    // Fun: festival decorations, pizza, growing plants, the fish tank, the printer...
+    const placed = this.fun.decorate(this.layout.furniture);
 
     if (autoOnTiles.size === 0) {
-      const plain = layoutToFurnitureInstances(this.layout.furniture);
+      const plain = layoutToFurnitureInstances(placed);
       this.furniture = butts.length > 0 ? [...plain, ...butts] : plain;
       return;
     }
 
     // Build modified furniture list with auto-state and animation applied
     const animFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
-    const modifiedFurniture: PlacedFurniture[] = this.layout.furniture.map((item) => {
+    const modifiedFurniture: PlacedFurniture[] = placed.map((item) => {
       const entry = getCatalogEntry(item.type);
       if (!entry) return item;
       // Check if any tile of this furniture overlaps an auto-on tile
@@ -1583,6 +1588,15 @@ export class OfficeState {
   }
 
   private routeCharacter(ch: Character): void {
+    // Fun: a ritual or pastime (standup, whiteboard, ping-pong, ...) borrows it.
+    const borrowed = this.fun.targetFor(ch);
+    if (borrowed) {
+      if (this.stubbingOut(ch)) return;
+      this.destinationIntents.delete(ch.id); // routing starts afresh once it's let go
+      ch.smokeBreak = undefined;
+      this.setZoneTarget(ch, borrowed);
+      return;
+    }
     const signals = this.destinationSignals(ch);
     const intent = this.holdIntent(ch, pickDestination(signals));
     this.actOnIntent(ch, intent);
@@ -1688,6 +1702,12 @@ export class OfficeState {
       }
       unreachable.add(place.key);
     }
+  }
+
+  /** Can the character walk to that place from where it stands? (Fun picks places with it.) */
+  canReach(ch: Character, target: { col: number; row: number; sit: boolean }): boolean {
+    if (ch.tileCol === target.col && ch.tileRow === target.row) return true;
+    return this.pathForTarget(ch, target).length > 0;
   }
 
   /** In use by someone else: a seat held as a desk or a destination, a reserved spot. */
@@ -1891,7 +1911,8 @@ export class OfficeState {
     const prevFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
     this.furnitureAnimTimer += dt;
     const newFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
-    if (newFrame !== prevFrame) {
+    const funChanged = this.fun.update(dt);
+    if (newFrame !== prevFrame || funChanged) {
       this.rebuildFurnitureInstances();
     }
     this.officeClock += dt;
@@ -1943,7 +1964,10 @@ export class OfficeState {
 
     // ── Pet FSM ────────────────────────────────────────────────
     for (const pet of this.pets) {
-      updatePet(pet, dt, this.walkableTiles, this.characters, this.tileMap, this.blockedTiles);
+      // Fun: the smart pets go where they're needed; otherwise their own FSM.
+      if (!this.fun.drivePet(pet, dt)) {
+        updatePet(pet, dt, this.walkableTiles, this.characters, this.tileMap, this.blockedTiles);
+      }
 
       // Tick heart bubble timer (mirrors character waiting-bubble pattern)
       if (pet.bubbleType) {
