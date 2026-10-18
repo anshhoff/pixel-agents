@@ -55,6 +55,13 @@ export const TOKENS_BACKFILL_MAX_DEPTH = 3;
 
 /** How often `gh` is asked for open PRs and issues. */
 export const NOTICE_BOARD_POLL_MS = 10 * 60_000;
+/** Set to 0/false/off/no to never run `gh` for the notice board. */
+export const NOTICE_BOARD_ENABLED_ENV = 'PIXEL_AGENTS_NOTICE_BOARD';
+
+export function noticeBoardEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env[NOTICE_BOARD_ENABLED_ENV]?.trim().toLowerCase();
+  return !value || !['0', 'false', 'off', 'no'].includes(value);
+}
 /** One `gh` call's time limit. */
 export const NOTICE_BOARD_GH_TIMEOUT_MS = 30_000;
 /** Results asked of each search. */

@@ -24,7 +24,7 @@ import { classifyTool } from '../progress/phase.js';
 import type { Landed, ProgressTracker } from '../progress/progressTracker.js';
 import { repoOf } from '../tasks/taskLedger.js';
 import { formatToolStatus } from '../transcriptParser.js';
-import { LOOP_CHECK_INTERVAL_MS, TOKENS_DIR_NAME } from './constants.js';
+import { LOOP_CHECK_INTERVAL_MS, noticeBoardEnabled, TOKENS_DIR_NAME } from './constants.js';
 import { localDateKey } from './localDay.js';
 import { LoopDetector } from './loopDetector.js';
 import { type GhRunner, NoticeBoard } from './noticeBoard.js';
@@ -105,7 +105,7 @@ export class SignalsHub {
         ? null
         : new TokenBackfill({ projectsDir, cacheDir: tokensDir, now: this.now });
     this.board =
-      options.noticeBoard === null
+      options.noticeBoard === null || !noticeBoardEnabled()
         ? null
         : new NoticeBoard({
             run: options.noticeBoard?.run,
