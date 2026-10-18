@@ -73,6 +73,12 @@ import type {
 } from '../types.js';
 import { CharacterState, Direction, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
+import {
+  renderCoffeeCup,
+  renderNightLights,
+  renderPlateText,
+  renderWave,
+} from './ambienceRender.js';
 import { getCharacterSprite } from './characters.js';
 import { renderMatrixEffect } from './matrixEffect.js';
 import { knockBobPx } from './npcs.js';
@@ -383,10 +389,12 @@ export function renderScene(
         },
       });
     } else {
+      const plate = f.plateText; // a name plate: the repo on its face
       drawables.push({
         zY: f.zY,
         draw: (c) => {
           c.drawImage(cached, fx, fy);
+          if (plate) renderPlateText(c, plate, fx, fy, zoom);
         },
       });
     }
@@ -399,11 +407,13 @@ export function renderScene(
     const cached = getCachedSprite(spriteData, zoom);
     // Sitting offset: shift character down when seated so they visually sit in the chair
     const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
+    // The receptionist's wave bobs her up a px on its second frame.
+    const bob = ch.waveFrame === 1 ? 1 : 0;
     // Anchor at bottom-center of character — round to integer device pixels
     const drawX = Math.round(offsetX + ch.x * zoom - cached.width / 2);
     // Phase M: one knocking on Ansh's door bobs up now and then.
     const knock = knockBobPx(ch);
-    const drawY = Math.round(offsetY + (ch.y + sittingOffset - knock) * zoom - cached.height);
+    const drawY = Math.round(offsetY + (ch.y + sittingOffset - knock - bob) * zoom - cached.height);
 
     // Sort characters by bottom of their tile (not center) so they render
     // in front of same-row furniture (e.g. chairs) but behind furniture
@@ -476,6 +486,22 @@ export function renderScene(
       drawables.push({
         zY: charZY + CIGARETTE_Z_SORT_OFFSET,
         draw: (c) => renderSmoking(c, smoker, offsetX, offsetY, zoom),
+      });
+    }
+    // ...back from the Café with a cup; the receptionist waving someone in.
+    if (ch.carryingCup) {
+      const holder = ch;
+      drawables.push({
+        zY: charZY + CIGARETTE_Z_SORT_OFFSET,
+        draw: (c) => renderCoffeeCup(c, holder, offsetX, offsetY, zoom),
+      });
+    }
+    if (ch.waveFrame !== undefined) {
+      const waver = ch;
+      const frame = ch.waveFrame;
+      drawables.push({
+        zY: charZY + CIGARETTE_Z_SORT_OFFSET,
+        draw: (c) => renderWave(c, waver, frame, offsetX, offsetY, zoom),
       });
     }
   }
@@ -1017,6 +1043,22 @@ export function renderFrame(
     hoveredId,
     pets ?? [],
   );
+
+  // Night lights over the office (not while editing it); labels are DOM.
+  if (!editor) {
+    renderNightLights(
+      ctx,
+      new Date(),
+      characters,
+      areaTiles,
+      cols,
+      offsetX,
+      offsetY,
+      zoom,
+      canvasWidth,
+      canvasHeight,
+    );
+  }
 
   // Character speech bubbles render in ToolOverlay (DOM, above the labels).
   // Pet heart bubbles (canvas overlay pass)

@@ -142,7 +142,11 @@ export function zonedOffice(
   furniture: PlacedFurniture[] = OFFICE_FURNITURE,
   map: string[] = OFFICE_MAP,
 ): OfficeState {
-  return new OfficeState(layoutFrom(map, furniture));
+  const os = new OfficeState(layoutFrom(map, furniture));
+  // No Café coffee runs at the gaps between tools unless a test asks for them
+  // (coffeeRuns.test.ts): every other behaviour is tested without the detour.
+  os.coffeeRandom = () => 1;
+  return os;
 }
 
 /** Simulate `seconds` of game time in small steps. */

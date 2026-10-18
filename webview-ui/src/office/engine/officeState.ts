@@ -8,6 +8,7 @@ import {
   CHARACTER_HIT_HEIGHT,
   CHARACTER_SITTING_OFFSET_PX,
   CIGARETTE_Z_SORT_OFFSET,
+  COFFEE_RNG_SEED,
   DISMISS_BUBBLE_FAST_FADE_SEC,
   FURNITURE_ANIM_INTERVAL_SEC,
   GREETER_ID,
@@ -51,10 +52,26 @@ import type { OfficeZones } from '../zones.js';
 import { isRoutedZoneLabel, NO_ZONES, parseZones, toZoneLabel, ZoneLabel } from '../zones.js';
 import { Celebrations } from './celebrations.js';
 import { createCharacter, isSettledAtZoneTarget, updateCharacter } from './characters.js';
+import type { CoffeeRunState } from './coffeeRuns.js';
+import {
+  carryingCup,
+  NO_COFFEE_RUN,
+  onCoffeeRun,
+  seededRandom,
+  stepCoffeeRun,
+} from './coffeeRuns.js';
 import { advanceMatrixEffect, startMatrixEffect } from './matrixEffectState.js';
 import type { NpcKind } from './npcs.js';
 import { OfficeNpcs } from './npcs.js';
+import {
+  coffeeZones,
+  furnitureAt,
+  namePlateInstances,
+  placeReceptionist,
+  withLiveClocks,
+} from './officeAmbience.js';
 import { createPet, updatePet } from './petEntity.js';
+import { waveFrame } from './receptionist.js';
 import { anchorTile, closestFreeSeat, helperSeat } from './seatPlacement.js';
 import type { SmokeBreakState } from './smokeBreaks.js';
 import { NO_SMOKE_BREAK, onSmokeBreak, stepSmokeBreak } from './smokeBreaks.js';
@@ -93,6 +110,8 @@ interface AgentZoneSignals {
   smokeBreak: SmokeBreakState;
   /** Paused by a usage limit (agentLimit, inbox/inboxStore.ts). */
   paused?: boolean;
+  /** The Café coffee-run scheduler (coffeeRuns.ts). */
+  coffeeRun: CoffeeRunState;
 }
 
 /** Where the Entrance door's leaving target is keyed (shared, never reserved). */
@@ -168,6 +187,23 @@ export class OfficeState {
   /** Phase B: bells, confetti and the trophy wall's tally (celebrations.ts). */
   readonly celebrations = new Celebrations();
 
+  // ── Living office: ambience (phase C, officeAmbience.ts) ────
+  /** The local clock the windows and clocks read. Tests replace it. */
+  ambienceNow: () => Date = () => new Date();
+  /** The coffee runs' RNG: seeded, so an office's runs are reproducible. Tests replace it. */
+  coffeeRandom: () => number = seededRandom(COFFEE_RNG_SEED);
+  /** Where coffee runs go: the Café counter, as a Café-only OfficeZones. */
+  private coffeeCounter: OfficeZones = NO_ZONES;
+  /**
+   * The Entrance receptionist, deliberately NOT in `characters` — for the
+   * greeter's reasons (below): she is not an agent, so nothing that seats,
+   * routes, counts, persists or hit-tests agents ever sees her. Drawn because
+   * getCharacters() appends her. Null without an Entrance RECEPTION_DESK.
+   */
+  receptionist: Character | null = null;
+  /** Office-clock time she began waving (an agent walked in), or null. */
+  private receptionistWaveAt: number | null = null;
+
   /**
    * directoryName → list of Area labels that Directory belongs to.
    * Populated by useExtensionMessages on `areaMappingsLoaded`. Consulted by
@@ -215,6 +251,8 @@ export class OfficeState {
     this.zones = this.buildZones();
     this.npcs = this.buildNpcs();
     this.npcs.reserveSeats(this.seats);
+    this.coffeeCounter = coffeeZones(this);
+    this.receptionist = placeReceptionist(this, null);
     // Pets are built last because they need walkableTiles populated for spawn.
     this.rebuildPetsFromLayout(this.layout);
   }
@@ -231,6 +269,7 @@ export class OfficeState {
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
     this.zones = this.buildZones();
     this.npcs = this.buildNpcs();
+    this.coffeeCounter = coffeeZones(this);
 
     // Shift character positions when grid expands left/up
     if (shift && (shift.col !== 0 || shift.row !== 0)) {
@@ -262,6 +301,8 @@ export class OfficeState {
       seat.assigned = false;
     }
     this.npcs.reserveSeats(this.seats); // never an agent's
+    // The receptionist takes her chair before any agent picks a seat.
+    this.receptionist = placeReceptionist(this, this.receptionist);
 
     // First pass: try to keep characters at their existing seats
     for (const ch of this.characters.values()) {
@@ -836,6 +877,8 @@ export class OfficeState {
     ch.state = CharacterState.WALK;
     ch.frame = 0;
     ch.frameTimer = 0;
+    // ...and the receptionist waves it in.
+    if (this.receptionist) this.receptionistWaveAt = this.officeClock;
   }
 
   /**
@@ -1193,11 +1236,18 @@ export class OfficeState {
 
     // ...and its ashtray fills with butts while people wait on the user.
     // Phase B: a celebration bell rings on a desk; trophies stand on the shelves.
-    const butts = [...this.ashtrayButtInstances(), ...this.celebrations.bellInstances()];
-    const placed = this.placedWithTrophies();
+    // Ambience (officeAmbience.ts): the windows show the time of day, the
+    // clocks the time, and each occupied Dev desk its agent's name plate.
+    const now = this.ambienceNow();
+    const placed = furnitureAt(this.placedWithTrophies(), now);
+    const butts = [
+      ...this.ashtrayButtInstances(),
+      ...this.celebrations.bellInstances(),
+      ...namePlateInstances(this, this.characters.values()),
+    ];
 
     if (autoOnTiles.size === 0) {
-      const plain = layoutToFurnitureInstances(placed);
+      const plain = withLiveClocks(layoutToFurnitureInstances(placed), now);
       this.furniture = butts.length > 0 ? [...plain, ...butts] : plain;
       return;
     }
@@ -1228,7 +1278,7 @@ export class OfficeState {
       return item;
     });
 
-    const instances = layoutToFurnitureInstances(modifiedFurniture);
+    const instances = withLiveClocks(layoutToFurnitureInstances(modifiedFurniture), now);
     this.furniture = butts.length > 0 ? [...instances, ...butts] : instances;
   }
 
@@ -1509,7 +1559,12 @@ export class OfficeState {
   private zoneSignalsFor(id: number): AgentZoneSignals {
     let signals = this.agentZoneSignals.get(id);
     if (!signals) {
-      signals = { tools: new Map(), permission: false, smokeBreak: NO_SMOKE_BREAK };
+      signals = {
+        tools: new Map(),
+        permission: false,
+        smokeBreak: NO_SMOKE_BREAK,
+        coffeeRun: NO_COFFEE_RUN,
+      };
       this.agentZoneSignals.set(id, signals);
     }
     return signals;
@@ -1617,15 +1672,46 @@ export class OfficeState {
       },
       this.zoneRandom,
     );
+    const onBreak = onSmokeBreak(signals.smokeBreak, now);
+    // A coffee run: never with someone needing the user, tests, sleep or a smoke.
+    signals.coffeeRun = stepCoffeeRun(
+      signals.coffeeRun,
+      {
+        now,
+        active: ch.isActive,
+        liveTools: signals.tools.size,
+        blocked:
+          signals.permission ||
+          tools.askingUser ||
+          tools.testing ||
+          tools.longCommand ||
+          onBreak ||
+          sleeping,
+        counterFree: this.hasFreeCounterPlace(ch),
+        atCounterSec:
+          ch.zoneTarget?.zone === ZoneLabel.CAFE && isSettledAtZoneTarget(ch)
+            ? (ch.zoneFxTimer ?? 0)
+            : 0,
+      },
+      this.coffeeRandom,
+    );
+    ch.carryingCup = carryingCup(signals.coffeeRun, now) || undefined;
     return {
       sleeping,
       permission: signals.permission,
       ...tools,
-      onBreak: onSmokeBreak(signals.smokeBreak, now),
+      onBreak,
+      coffeeRun: onCoffeeRun(signals.coffeeRun),
       active: ch.isActive,
       waiting: !ch.isActive,
       paused: signals.paused === true,
     };
+  }
+
+  /** Is a Café counter place free for this character (its own counts)? */
+  private hasFreeCounterPlace(ch: Character): boolean {
+    const cafe = this.coffeeCounter.zones.get(ZoneLabel.CAFE);
+    return cafe !== undefined && cafe.places.some((p) => !this.isPlaceTaken(p, ch));
   }
 
   /** Is a Smoke spot free for this character (its own counts)? */
@@ -1728,7 +1814,7 @@ export class OfficeState {
     const unreachable = new Set<string>();
     for (;;) {
       const choice = choosePlace(
-        this.zones,
+        kind === Destination.COFFEE ? this.coffeeCounter : this.zones,
         kind,
         { col: ch.tileCol, row: ch.tileRow },
         (place) => unreachable.has(place.key) || this.isPlaceTaken(place, ch),
@@ -1955,6 +2041,12 @@ export class OfficeState {
     if (this.greeter && advanceMatrixEffect(this.greeter, dt) === 'despawned') {
       this.greeter = null;
     }
+    // The receptionist runs no FSM either: she sits, and waves agents in.
+    if (this.receptionist) {
+      const since = this.receptionistWaveAt;
+      this.receptionist.waveFrame =
+        (since === null ? null : waveFrame(this.officeClock - since)) ?? undefined;
+    }
 
     const toDelete: number[] = [];
     for (const ch of this.characters.values()) {
@@ -2036,6 +2128,7 @@ export class OfficeState {
     const chars = Array.from(this.characters.values());
     if (this.greeter) chars.push(this.greeter);
     chars.push(...this.npcs.characters());
+    if (this.receptionist) chars.push(this.receptionist); // likewise: a prop, not an agent
     return chars;
   }
 

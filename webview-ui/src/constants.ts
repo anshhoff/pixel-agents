@@ -450,6 +450,67 @@ export const REMOTE_WORKERS_MOBILE_MAX_HEIGHT_RATIO = 0.5;
 /** How often the tiles re-read the clock (a sleeping worker's "idle 3h"). */
 export const REMOTE_WORKERS_CLOCK_MS = 60_000;
 
+// ── Living office: ambience (docs/office/DESIGN.md, phase C) ──
+/** Time of day by the PC's local hour: day [DAY, DUSK), dusk [DUSK, NIGHT)
+ *  and [DAWN, DAY), night otherwise. */
+export const AMBIENCE_DAWN_HOUR = 6;
+export const AMBIENCE_DAY_HOUR = 7;
+export const AMBIENCE_DUSK_HOUR = 17;
+export const AMBIENCE_NIGHT_HOUR = 19;
+/** The wall window's three furniture types; any placed one shows the current one. */
+export const WINDOW_DAY_TYPE = 'WINDOW_DAY';
+export const WINDOW_DUSK_TYPE = 'WINDOW_DUSK';
+export const WINDOW_NIGHT_TYPE = 'WINDOW_NIGHT';
+/** Night lights: a gentle wash over the whole office, and a further one over
+ *  each room (Area) nobody is in. Canvas only — labels and UI are DOM. */
+export const NIGHT_DIM_COLOR = '#0a0f2e';
+export const NIGHT_DIM_ALPHA = 0.22;
+export const NIGHT_EMPTY_ROOM_DIM_ALPHA = 0.14;
+/** Real clocks: the CLOCK_FACE sprite's hands, drawn from the local time. The
+ *  face is the light ellipse around the pivot; a hand reaches `radius` px from
+ *  it on each axis (the face is wider than it is tall). */
+export const CLOCK_FACE_TYPE = 'CLOCK_FACE';
+export const CLOCK_PIVOT = { x: 7, y: 16 } as const;
+export const CLOCK_MINUTE_HAND_RADIUS = { x: 4, y: 3 } as const;
+export const CLOCK_HOUR_HAND_RADIUS = { x: 2, y: 2 } as const;
+export const CLOCK_HAND_COLOR = '#73787e';
+/** Name plates on occupied Dev desks (runtime-only furniture, never saved).
+ *  The plate's blank brass face in its sprite, and the 3×5 text drawn on it. */
+export const NAME_PLATE_TYPE = 'NAME_PLATE';
+export const NAME_PLATE_FACE = { x: 3, y: 3, w: 10, h: 2 } as const;
+/** The plate's bottom edge in its sprite (px from the top). */
+export const NAME_PLATE_SPRITE_BOTTOM_PX = 8;
+/** It stands this far above the desk sprite's bottom: on the front edge of the
+ *  desktop, above the desk's front panel. */
+export const NAME_PLATE_DESK_FRONT_INSET_PX = 7;
+export const NAME_PLATE_TEXT_COLOR = '#301c1c';
+/** Café coffee runs: while working, at a gap of more than GAP_SEC with no live
+ *  tool (after one), CHANCE of a walk to the Café counter, at most once per
+ *  cooldown; it stands there MIN + up to RANGE seconds and carries the cup
+ *  back for CARRY_SEC. Gives up after MAX_SEC if it can't get there. */
+export const COFFEE_MACHINE_TYPE_PREFIX = 'COFFEE_MACHINE';
+export const COFFEE_RUN_GAP_SEC = 4;
+export const COFFEE_RUN_CHANCE = 0.15;
+export const COFFEE_RUN_COOLDOWN_SEC = 30 * 60;
+export const COFFEE_RUN_STAND_MIN_SEC = 6;
+export const COFFEE_RUN_STAND_RANGE_SEC = 4;
+export const COFFEE_RUN_MAX_SEC = 90;
+export const COFFEE_CUP_CARRY_SEC = 20;
+/** The coffee runs' RNG seed (deterministic; tests replace the RNG). */
+export const COFFEE_RNG_SEED = 0xc0ffee;
+/** The cup: 2 px wide, 3 tall (a coffee px on top), held at the hand. */
+export const COFFEE_CUP_COLOR = '#f4f1ea';
+export const COFFEE_CUP_COFFEE_COLOR = '#6b3e26';
+/** Receptionist: a non-agent NPC behind the Entrance's RECEPTION_DESK who
+ *  waves (2 frames: arm up, then arm out with a 1 px bob) as an agent walks in. */
+export const RECEPTIONIST_ID = -1_000_000_001;
+export const RECEPTION_DESK_TYPE_PREFIX = 'RECEPTION_DESK';
+export const RECEPTIONIST_PALETTE = 1;
+export const RECEPTIONIST_WAVE_SEC = 1.5;
+export const RECEPTIONIST_WAVE_FRAME_SEC = 0.25;
+export const RECEPTIONIST_HAND_COLOR = '#f2c49b';
+export const RECEPTIONIST_HAND_OUTLINE_COLOR = '#3b2626';
+
 // ── Greeter + Intro bubble ──────────────────────────────────
 /** Reserved character id for the Intro's greeter. Far outside both real agent
  *  ids (positive) and sub-agent ids (small negatives from -1 down). */
