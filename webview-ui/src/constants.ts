@@ -733,3 +733,33 @@ export const VISUAL_VIEWPORT_FULL_EPSILON_PX = 1;
  *  (with an editable focused) = the software keyboard is up. Well above an
  *  address bar collapsing (~56 px), well below any on-screen keyboard. */
 export const KEYBOARD_MIN_HEIGHT_PX = 150;
+
+// ── Useful signals (docs/office/DESIGN.md, phase D) ─────────────
+/** Desk fire: seconds per FIRE_ICON ON frame. */
+export const FIRE_ICON_FRAME_SEC = 0.25;
+/** Alarm lamp: seconds per OFF/ON half of a blink. */
+export const ALARM_LAMP_BLINK_SEC = 0.5;
+/** Trouble icons sit this many sprite px up from the desk tile's bottom (on the top). */
+export const TROUBLE_ICON_DESK_LIFT_PX = 4;
+/** ...and this far beside the tile's middle, clear of a centred monitor. */
+export const TROUBLE_ICON_SIDE_PX = 5;
+/** The loop line on a label. */
+export const LOOP_LABEL_TEXT = '🌀 going in circles?';
+/** The alarm's line on a label (3+ failures in a row). */
+export const STUCK_LABEL_TEXT = '🚨 stuck?';
+/** Timeline card: rows shown (the server keeps 20). */
+export const TIMELINE_CARD_ROWS = 10;
+/** Timeline card: width on desktop, CSS px. */
+export const TIMELINE_CARD_WIDTH_PX = 300;
+/** Timeline card: gap between the character and the card, CSS px. */
+export const TIMELINE_CARD_GAP_PX = 24;
+/** Notice board sprite type (office pack, a wall item). */
+export const NOTICE_BOARD_TYPE = 'NOTICE_BOARD';
+/** The board's cork, in sprite px from its top-left. */
+export const NOTICE_BOARD_CORK = { x: 5, y: 9, w: 22, h: 16 } as const;
+/** Lines of tiny text drawn on the cork. */
+export const NOTICE_BOARD_LINES = 5;
+/** Ink on the cork. */
+export const NOTICE_BOARD_INK = '#2a1a0e';
+/** A pinned note's paper behind each line. */
+export const NOTICE_BOARD_PAPER = 'rgba(250, 244, 222, 0.85)';

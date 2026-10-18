@@ -6,6 +6,8 @@ import {
   safePrUrl,
   totalPushes,
 } from '../progress/progressFormat.js';
+import { tokenMeterText, tokenMeterTitle } from '../signals/signalFormat.js';
+import { useSignals } from '../signals/useSignals.js';
 
 interface DailyStripProps {
   /** Latest dailyStats; the strip stays hidden until the first one arrives. */
@@ -60,7 +62,14 @@ function PrTrophy({ pr, compact }: { pr: DailyPr; compact: boolean }) {
  * on phones it slides away with the office page and sits above the card bar.
  */
 export function DailyStrip({ stats, compact, aboveToolbar }: DailyStripProps) {
+  // Today's tokens and estimated spend (useful signals): "🔤 1.2M tok · ~$3.40 est."
+  const { tokens } = useSignals();
   if (!stats) return null;
+  const tokenMeter = tokens && (
+    <span className="shrink-0" title={tokenMeterTitle(tokens)} data-testid="token-meter">
+      {tokenMeterText(tokens)}
+    </span>
+  );
 
   const prs = newestPrs(stats.prs);
   const pushes = totalPushes(stats.pushes);
@@ -85,6 +94,7 @@ export function DailyStrip({ stats, compact, aboveToolbar }: DailyStripProps) {
         <span className="shrink-0">✏️{stats.filesEdited}</span>
         <span className="shrink-0">⌨️{stats.commandsRun}</span>
         <span className="shrink-0">⏱️{hours.replace(' ', '')}</span>
+        {tokenMeter}
         {prs[0] && (
           <span className="flex min-w-0 pl-8 border-l-2 border-border">
             <PrTrophy pr={prs[0]} compact />
@@ -105,6 +115,7 @@ export function DailyStrip({ stats, compact, aboveToolbar }: DailyStripProps) {
       <span className="shrink-0">✏️ {summary[2]}</span>
       <span className="shrink-0">⌨️ {summary[3]}</span>
       <span className="shrink-0">⏱️ {hours}</span>
+      {tokenMeter}
       {prs.length > 0 && (
         // Newest first; whatever does not fit scrolls sideways under the edge.
         <div className="flex items-center gap-12 min-w-0 pl-12 border-l-2 border-border overflow-x-auto no-scrollbar">
