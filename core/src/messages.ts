@@ -62,7 +62,8 @@ export type ServerMessage =
   | TerminalAvailability
   | TerminalSessionOpened
   | TerminalSessionClosed
-  | AgentDiagnostics;
+  | AgentDiagnostics
+  | TimeReport;
 
 export type ClientMessage =
   | WebviewReady
@@ -95,7 +96,8 @@ export type ClientMessage =
   | RequestTasks
   | RequestReport
   | WriteReportNow
-  | RequestTimeline;
+  | RequestTimeline
+  | RequestTimeReport;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -588,6 +590,39 @@ export interface AgentDiagnostics {
   agents: Record<string, any>[];
 }
 
+export interface TimeReport {
+  type: 'timeReport';
+  from: string;
+  to: string;
+  rows: TimeReportRow[];
+  unattributed: TimeReportUnattributed[];
+}
+
+export interface TimeReportRow {
+  date: string;
+  repo: string;
+  activeMs: number;
+  tasks: number;
+  prs: number;
+  pushes: number;
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  estimatedUsd?: number;
+  partialEstimate?: boolean;
+}
+
+export interface TimeReportUnattributed {
+  date: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  estimatedUsd?: number;
+  partialEstimate?: boolean;
+}
+
 export interface WebviewReady {
   type: 'webviewReady';
 }
@@ -745,4 +780,10 @@ export interface WriteReportNow {
 export interface RequestTimeline {
   type: 'requestTimeline';
   id: number;
+}
+
+export interface RequestTimeReport {
+  type: 'requestTimeReport';
+  from: string;
+  to: string;
 }
