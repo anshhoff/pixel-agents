@@ -33,6 +33,8 @@ export interface InboxInputs {
 interface InboxStripItemsProps extends InboxInputs {
   /** Phones: a short chip. */
   compact: boolean;
+  /** TV mode: the 📥 count as a plain badge — no button, no panel. */
+  passive?: boolean;
 }
 
 const WAIT_COLORS = {
@@ -164,7 +166,7 @@ function PausedItem({ row, now }: { row: PausedRow; now: number }) {
  * usage limit pauses anyone. The panel is portalled to the body: the strip
  * clips its overflow, and on phones the office page is a transformed track.
  */
-export function InboxStripItems({ compact, ...inputs }: InboxStripItemsProps) {
+export function InboxStripItems({ compact, passive = false, ...inputs }: InboxStripItemsProps) {
   const now = useClock();
   const { waiting, paused, pausedLine } = useInbox(inputs, now);
   const [open, setOpen] = useState(false);
@@ -201,6 +203,34 @@ export function InboxStripItems({ compact, ...inputs }: InboxStripItemsProps) {
 
   const count = waiting.length;
   const oldestLevel = count > 0 ? waitLevel(Math.max(0, now - waiting[0].since)) : 'none';
+  const countColor =
+    count === 0 ? WAIT_COLORS.none : oldestLevel === 'none' ? undefined : WAIT_COLORS[oldestLevel];
+  const countTitle = count === 1 ? '1 agent needs you' : `${count} agents need you`;
+  const pausedItem = pausedLine && (
+    <span className="shrink-0" title={pausedLine} data-testid="paused-summary">
+      {compact ? `⏸️${paused.length}` : pausedLine}
+    </span>
+  );
+
+  if (passive) {
+    // TV mode: waiting work stays visible from across the room; nothing
+    // invites a click (the panel and its links are controls).
+    return (
+      <>
+        <span
+          className={`shrink-0 flex items-center gap-4 text-text ${compact ? 'text-2xs' : 'text-sm'}`}
+          title={countTitle}
+          data-testid="inbox-badge"
+          data-count={count}
+        >
+          <span>📥</span>
+          <span style={{ color: countColor }}>{count}</span>
+        </span>
+        {pausedItem}
+      </>
+    );
+  }
+
   const panelStyle: React.CSSProperties = compact
     ? {
         left: INBOX_PANEL_MOBILE_MARGIN_PX,
@@ -221,30 +251,15 @@ export function InboxStripItems({ compact, ...inputs }: InboxStripItemsProps) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={`shrink-0 flex items-center gap-4 bg-transparent border-0 p-0 cursor-pointer text-text ${compact ? 'text-2xs' : 'text-sm'}`}
-        title={count === 1 ? '1 agent needs you' : `${count} agents need you`}
+        title={countTitle}
         aria-expanded={open}
         data-testid="inbox-button"
         data-count={count}
       >
         <span>📥</span>
-        <span
-          style={{
-            color:
-              count === 0
-                ? WAIT_COLORS.none
-                : oldestLevel === 'none'
-                  ? undefined
-                  : WAIT_COLORS[oldestLevel],
-          }}
-        >
-          {count}
-        </span>
+        <span style={{ color: countColor }}>{count}</span>
       </button>
-      {pausedLine && (
-        <span className="shrink-0" title={pausedLine} data-testid="paused-summary">
-          {compact ? `⏸️${paused.length}` : pausedLine}
-        </span>
-      )}
+      {pausedItem}
       {open &&
         anchor &&
         createPortal(

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
 import {
@@ -16,6 +17,8 @@ interface ZoomControlsProps {
   onZoomChange: (zoom: number) => void;
   /** Frame the whole office (largest zoom that fits, centered). */
   onFit: () => void;
+  /** More buttons under Fit in the stack (the TV mode button). */
+  extra?: ReactNode;
 }
 
 /** Four corner brackets — "frame everything". Shared with the phone shell's
@@ -33,7 +36,7 @@ export function FitIcon() {
   );
 }
 
-export function ZoomControls({ zoom, onZoomChange, onFit }: ZoomControlsProps) {
+export function ZoomControls({ zoom, onZoomChange, onFit, extra }: ZoomControlsProps) {
   const [showLevel, setShowLevel] = useState(false);
   const [fadeOut, setFadeOut] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -145,6 +148,7 @@ export function ZoomControls({ zoom, onZoomChange, onFit }: ZoomControlsProps) {
         >
           <FitIcon />
         </Button>
+        {extra}
       </div>
       <PanPad />
     </>
