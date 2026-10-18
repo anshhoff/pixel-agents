@@ -14,6 +14,7 @@ import {
   NOTICE_BOARD_LINES,
   NOTICE_BOARD_PAPER,
   NOTICE_BOARD_TYPE,
+  SIGNAL_POPUP_Z_INDEX,
 } from '../constants.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import { overlayProjection } from '../office/projection.js';
@@ -111,8 +112,8 @@ export function NoticeBoardOverlay({
       ))}
       {open && (
         <div
-          className="absolute z-40 left-1/2 top-16 -translate-x-1/2 pixel-panel flex flex-col gap-6 py-8 px-12 text-sm max-h-[70%] overflow-y-auto"
-          style={{ width: 'min(440px, calc(100% - 32px))' }}
+          className="absolute left-1/2 top-16 -translate-x-1/2 pixel-panel flex flex-col gap-6 py-8 px-12 text-sm max-h-[70%] overflow-y-auto"
+          style={{ width: 'min(440px, calc(100% - 32px))', zIndex: SIGNAL_POPUP_Z_INDEX }}
           data-testid="notice-board-list"
           onClick={(e) => e.stopPropagation()}
         >

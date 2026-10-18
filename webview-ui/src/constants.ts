@@ -739,10 +739,13 @@ export const KEYBOARD_MIN_HEIGHT_PX = 150;
 export const FIRE_ICON_FRAME_SEC = 0.25;
 /** Alarm lamp: seconds per OFF/ON half of a blink. */
 export const ALARM_LAMP_BLINK_SEC = 0.5;
-/** Trouble icons sit this many sprite px up from the desk tile's bottom (on the top). */
-export const TROUBLE_ICON_DESK_LIFT_PX = 4;
+/** Trouble icons stand this many sprite px past the desk tile's edge nearest the
+ *  desk's top (the far edge for a desk below the seat, the near one for a desk above). */
+export const TROUBLE_ICON_DESK_DROP_PX = 4;
 /** ...and this far beside the tile's middle, clear of a centred monitor. */
-export const TROUBLE_ICON_SIDE_PX = 5;
+export const TROUBLE_ICON_SIDE_PX = 8;
+/** The timeline card and the notice board's list: above the labels and bubbles. */
+export const SIGNAL_POPUP_Z_INDEX = 50;
 /** The loop line on a label. */
 export const LOOP_LABEL_TEXT = '🌀 going in circles?';
 /** The alarm's line on a label (3+ failures in a row). */

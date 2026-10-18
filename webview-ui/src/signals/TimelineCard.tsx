@@ -9,7 +9,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Button } from '../components/ui/Button.js';
-import { TIMELINE_CARD_GAP_PX, TIMELINE_CARD_ROWS, TIMELINE_CARD_WIDTH_PX } from '../constants.js';
+import {
+  SIGNAL_POPUP_Z_INDEX,
+  TIMELINE_CARD_GAP_PX,
+  TIMELINE_CARD_ROWS,
+  TIMELINE_CARD_WIDTH_PX,
+} from '../constants.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import { overlayProjection } from '../office/projection.js';
 import { safePrUrl } from '../progress/progressFormat.js';
@@ -94,7 +99,7 @@ export function TimelineCard({
 
   let style: React.CSSProperties;
   if (sheet) {
-    style = { left: 0, right: 0, bottom: 0, maxHeight: '55%' };
+    style = { left: 0, right: 0, bottom: 0, maxHeight: '55%', zIndex: SIGNAL_POPUP_Z_INDEX };
   } else {
     const rect = el.getBoundingClientRect();
     const project = overlayProjection(
@@ -113,7 +118,13 @@ export function TimelineCard({
       cardH: cardHRef.current,
       gap: TIMELINE_CARD_GAP_PX,
     });
-    style = { left, top, width: TIMELINE_CARD_WIDTH_PX, maxHeight: '70%' };
+    style = {
+      left,
+      top,
+      width: TIMELINE_CARD_WIDTH_PX,
+      maxHeight: '70%',
+      zIndex: SIGNAL_POPUP_Z_INDEX,
+    };
   }
 
   const rows = timeline ? timelineRows(timeline.entries, TIMELINE_CARD_ROWS) : [];
@@ -121,7 +132,7 @@ export function TimelineCard({
   return (
     <div
       ref={cardRef}
-      className="absolute z-30 pixel-panel flex flex-col gap-4 py-6 px-10 text-sm overflow-y-auto select-none"
+      className="absolute pixel-panel flex flex-col gap-4 py-6 px-10 text-sm overflow-y-auto select-none"
       style={style}
       data-testid="timeline-card"
       data-agent-id={selected}

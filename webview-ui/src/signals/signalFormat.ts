@@ -132,8 +132,9 @@ export function signalLabel(
 
 /**
  * Where the desktop timeline card goes: beside the character (right, or left
- * when the right would run off the office), vertically centred on it and kept
- * inside the office with a small margin. CSS px within the office region.
+ * when the right would run off the office), its top a little above the
+ * character's feet -- below the status label -- and kept inside the office with
+ * a small margin. CSS px within the office region.
  */
 export function timelineCardPosition(p: {
   charX: number;
@@ -143,13 +144,18 @@ export function timelineCardPosition(p: {
   cardW: number;
   cardH: number;
   gap: number;
+  /** How far above the feet (charY) the card's top sits. */
+  above?: number;
   margin?: number;
 }): { left: number; top: number } {
   const margin = p.margin ?? 8;
   let left = p.charX + p.gap;
   if (left + p.cardW > p.containerW - margin) left = p.charX - p.gap - p.cardW;
   left = Math.max(margin, Math.min(left, p.containerW - p.cardW - margin));
-  const top = Math.max(margin, Math.min(p.charY - p.cardH / 2, p.containerH - p.cardH - margin));
+  const top = Math.max(
+    margin,
+    Math.min(p.charY - (p.above ?? 16), p.containerH - p.cardH - margin),
+  );
   return { left, top };
 }
 

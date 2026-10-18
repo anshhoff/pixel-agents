@@ -158,11 +158,11 @@ describe('timeline card', () => {
     const base = { containerW: 1000, containerH: 600, cardW: 300, cardH: 200, gap: 20 };
     expect(timelineCardPosition({ ...base, charX: 100, charY: 300 })).toEqual({
       left: 120,
-      top: 200,
+      top: 284,
     });
     expect(timelineCardPosition({ ...base, charX: 900, charY: 300 })).toEqual({
       left: 580,
-      top: 200,
+      top: 284,
     });
     expect(timelineCardPosition({ ...base, charX: 100, charY: 5 }).top).toBe(8);
     expect(timelineCardPosition({ ...base, charX: 100, charY: 590 }).top).toBe(392);

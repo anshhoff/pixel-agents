@@ -9,7 +9,7 @@
 import {
   ALARM_LAMP_BLINK_SEC,
   FIRE_ICON_FRAME_SEC,
-  TROUBLE_ICON_DESK_LIFT_PX,
+  TROUBLE_ICON_DESK_DROP_PX,
   TROUBLE_ICON_SIDE_PX,
 } from '../constants.js';
 import type { Direction, FurnitureInstance, Seat, SpriteData } from '../office/types.js';
@@ -71,11 +71,15 @@ export function troubleFurniture(
     // ends at the seat row, so just past that (still behind the seated character);
     // any other desk may be two rows deep.
     const side = seat.facingDir === Dir.LEFT ? -TROUBLE_ICON_SIDE_PX : TROUBLE_ICON_SIDE_PX;
-    const deskBottomRow = seat.facingDir === Dir.UP ? desk.row : desk.row + 1;
+    const above = seat.facingDir === Dir.UP;
+    const deskBottomRow = above ? desk.row : desk.row + 1;
+    // The desk top: low on a desk below the seat (its first row is the desk's
+    // back), high on the bottom row of a desk above it.
+    const bottom = (above ? desk.row : desk.row + 1) * TILE_SIZE + TROUBLE_ICON_DESK_DROP_PX;
     out.push({
       sprite,
       x: desk.col * TILE_SIZE + (TILE_SIZE - w) / 2 + side,
-      y: (desk.row + 1) * TILE_SIZE - h - TROUBLE_ICON_DESK_LIFT_PX,
+      y: bottom - h,
       zY: (deskBottomRow + 1) * TILE_SIZE + 0.5,
     });
   }
