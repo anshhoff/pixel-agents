@@ -89,6 +89,8 @@ export interface FurnitureInstance {
   zY: number;
   /** Render-time horizontal flip flag (for mirrored side variants) */
   mirrored?: boolean;
+  /** A name plate (runtime-only): the repo the renderer writes on its face. */
+  plateText?: string;
 }
 
 export interface ToolActivity {
@@ -279,6 +281,12 @@ export interface Character {
   /** Office-clock time it walked in through the door (a live agentCreated).
    *  Absent for restored agents, whose session length is unknown. */
   enteredAt?: number;
+  /** Back from a Café coffee run, cup in hand (coffeeRuns.ts). */
+  carryingCup?: boolean;
+  /** The Entrance receptionist (an NPC, never an agent; see OfficeState.receptionist). */
+  isReceptionist?: boolean;
+  /** The receptionist's wave frame while she waves; absent otherwise. */
+  waveFrame?: 0 | 1;
 
   // -- Agent Teams --
   /** Team name this agent belongs to */

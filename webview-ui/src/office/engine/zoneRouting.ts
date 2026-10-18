@@ -27,6 +27,8 @@ export const Destination = {
   SMOKE: 'smoke',
   /** A mid-work smoke: a long-running command, or a break after long work. */
   BREAK: 'break',
+  /** A Café coffee run at a gap between tools (coffeeRuns.ts). */
+  COFFEE: 'coffee',
 } as const;
 export type Destination = (typeof Destination)[keyof typeof Destination];
 
@@ -49,6 +51,8 @@ export interface DestinationSignals {
   longCommand: boolean;
   /** On a mid-work break (smokeBreaks.ts). */
   onBreak: boolean;
+  /** On a Café coffee run (coffeeRuns.ts). */
+  coffeeRun?: boolean;
   /** agentStatus active. */
   active: boolean;
   /** agentStatus waiting: the turn ended, it waits on the user. */
@@ -61,6 +65,7 @@ export function pickDestination(s: DestinationSignals): Destination {
   if (s.permission || s.askingUser) return Destination.MEETING;
   if (s.testing) return Destination.SERVER;
   if (s.active && (s.longCommand || s.onBreak)) return Destination.BREAK;
+  if (s.active && s.coffeeRun) return Destination.COFFEE;
   if (s.active) return Destination.DESK;
   if (s.waiting) return Destination.SMOKE;
   return Destination.IDLE;
@@ -102,8 +107,9 @@ export interface DestinationIntent {
  * Hysteresis: a destination is kept at least `holdSec` before switching, so a
  * burst of tools doesn't make a character pace back and forth. Going back to
  * its desk (work resumed) or to the Meeting room (someone needs the user) is
- * never held up. Returns `current` itself while it is kept, a new intent on a
- * switch (or the first one, when there is none yet).
+ * never held up, and nor is leaving a coffee run (a detour, called off at
+ * once). Returns `current` itself while it is kept, a new intent on a switch
+ * (or the first one, when there is none yet).
  */
 export function holdDestination(
   current: DestinationIntent | undefined,
@@ -113,7 +119,11 @@ export function holdDestination(
 ): DestinationIntent {
   if (!current) return { kind: wanted, since: now };
   if (current.kind === wanted) return current;
-  if (wanted === Destination.DESK || wanted === Destination.MEETING) {
+  if (
+    wanted === Destination.DESK ||
+    wanted === Destination.MEETING ||
+    current.kind === Destination.COFFEE
+  ) {
     return { kind: wanted, since: now };
   }
   if (now - current.since >= holdSec) return { kind: wanted, since: now };
@@ -133,6 +143,8 @@ export const DESTINATION_ZONES: Record<Destination, readonly ZoneLabel[]> = {
   [Destination.SMOKE]: [ZoneLabel.SMOKE, ZoneLabel.CAFE],
   // A mid-work smoke never overflows: with the terrace full it stays at work.
   [Destination.BREAK]: [ZoneLabel.SMOKE],
+  // The Café counter (OfficeState passes the counter places as the Café's).
+  [Destination.COFFEE]: [ZoneLabel.CAFE],
 };
 
 export type PlaceChoice =
