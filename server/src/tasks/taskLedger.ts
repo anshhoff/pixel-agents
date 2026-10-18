@@ -576,8 +576,10 @@ export class TaskLedger {
 
 // ── Helpers ──────────────────────────────────────────────────
 
-/** The repo an agent works in, as the office names it (as the daily totals do). */
-function repoOf(agent: AgentState): string {
+/** The repo an agent works in, as the office names it (as the daily totals do).
+ *  The token meter attributes responses by the same name, so the time report
+ *  can line a day's tokens up with its tasks. */
+export function repoOf(agent: Pick<AgentState, 'directoryName'>): string {
   return agent.directoryName || 'unknown';
 }
 

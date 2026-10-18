@@ -27,7 +27,9 @@ import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
 import { getSignalsHub } from './signals/registry.js';
+import type { UsageEntry } from './signals/tokenMeter.js';
 import { isDateKey } from './tasks/taskLedger.js';
+import { buildTimeReport, datesBetween, timeReportRange } from './tasks/timeReport.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
 
@@ -96,6 +98,9 @@ export interface ClientMessageContext {
  *    today's tasksSnapshot on connect), and the report is prose over that same
  *    log. They change nothing and run nothing, and the phone view -- which is
  *    unprivileged -- needs them for the Tasks board's history and Report tab.
+ *  - requestTimeReport: the same log and the token totals, summed per repo
+ *    per day for the Time tab and its CSV (repos, hours, counts and the token
+ *    figures the TODAY strip already shows).
  * Anything that writes, launches or spends (writeReportNow runs claude on the
  * operator's subscription) stays privileged.
  */
@@ -105,6 +110,8 @@ const READ_ONLY_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'requestReport',
   // Tap-for-timeline: one agent's recent actions, sent back to the asker only.
   'requestTimeline',
+  // Time per repo over a date range, sent back to the asker only.
+  'requestTimeReport',
 ]);
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -249,6 +256,30 @@ export function handleClientMessage(
       // Point-to-point too: only the client that tapped the character asked.
       const timeline = getSignalsHub()?.timelineMessage(store, msg.id);
       if (timeline) send({ ...timeline });
+      break;
+    }
+
+    case 'requestTimeReport': {
+      // Read-only clients may ask (READ_ONLY_MESSAGE_TYPES). The dates name
+      // files and the span bounds the reads, so a bad range is dropped
+      // unanswered. Point-to-point: only the Time tab that asked wants it.
+      // The tokens may need the transcripts read first (signals/tokenBackfill.ts),
+      // so the reply follows once they are in; the task log is read then too.
+      const range = timeReportRange(msg.from, msg.to);
+      if (!range) break;
+      const usage =
+        getSignalsHub()?.timeReportUsage(datesBetween(range.from, range.to)) ??
+        Promise.resolve<Record<string, UsageEntry[]>>({});
+      void usage.then(
+        (byDate) =>
+          send({
+            ...buildTimeReport(range, {
+              tasksFor: (date) => runtime?.tasks.tasksFor(date) ?? [],
+              usageFor: (date) => byDate[date] ?? [],
+            }),
+          }),
+        (err) => console.error('[Pixel Agents] Time report failed:', err),
+      );
       break;
     }
 

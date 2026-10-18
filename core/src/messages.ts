@@ -66,7 +66,8 @@ export type ServerMessage =
   | PermissionPending
   | PermissionResolved
   | WeekStats
-  | Weather;
+  | Weather
+  | TimeReport;
 
 export type ClientMessage =
   | WebviewReady
@@ -100,7 +101,8 @@ export type ClientMessage =
   | RequestReport
   | WriteReportNow
   | RequestTimeline
-  | AnswerPermission;
+  | AnswerPermission
+  | RequestTimeReport;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -633,6 +635,39 @@ export interface Weather {
 
 export type WeatherCondition = 'clear' | 'clouds' | 'rain' | 'snow' | 'fog' | 'storm';
 
+export interface TimeReport {
+  type: 'timeReport';
+  from: string;
+  to: string;
+  rows: TimeReportRow[];
+  unattributed: TimeReportUnattributed[];
+}
+
+export interface TimeReportRow {
+  date: string;
+  repo: string;
+  activeMs: number;
+  tasks: number;
+  prs: number;
+  pushes: number;
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  estimatedUsd?: number;
+  partialEstimate?: boolean;
+}
+
+export interface TimeReportUnattributed {
+  date: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  estimatedUsd?: number;
+  partialEstimate?: boolean;
+}
+
 export interface WebviewReady {
   type: 'webviewReady';
 }
@@ -799,3 +834,9 @@ export interface AnswerPermission {
 }
 
 export type PermissionBehavior = 'allow' | 'deny';
+
+export interface RequestTimeReport {
+  type: 'requestTimeReport';
+  from: string;
+  to: string;
+}

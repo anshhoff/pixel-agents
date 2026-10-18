@@ -153,6 +153,8 @@ components:
         # Fun (week wall, weather in the windows)
         - $ref: '#/components/schemas/WeekStats'
         - $ref: '#/components/schemas/Weather'
+        # Manager: time per repo (in reply to requestTimeReport)
+        - $ref: '#/components/schemas/TimeReport'
       discriminator: type
 
     ClientMessage:
@@ -192,6 +194,8 @@ components:
         - $ref: '#/components/schemas/RequestTimeline'
         # Permission approvals from the board
         - $ref: '#/components/schemas/AnswerPermission'
+        # Manager: time per repo
+        - $ref: '#/components/schemas/RequestTimeReport'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -778,6 +782,91 @@ components:
           type: number
         city:
           type: string
+
+    TimeReportRow:
+      description: |
+        One repo's day in the time report: its tasks' active time and counts from the
+        task log, and the tokens of the API responses attributed to it. The token
+        fields are absent when no response of that day was attributed to the repo
+        (a token file from before attribution existed, work on another machine, or a
+        transcript this server never read) -- "—", not zero.
+      type: object
+      additionalProperties: false
+      required: [date, repo, activeMs, tasks, prs, pushes]
+      properties:
+        date:
+          type: string
+          description: Local date, YYYY-MM-DD.
+        repo:
+          type: string
+        activeMs:
+          type: integer
+        tasks:
+          type: integer
+        prs:
+          type: integer
+        pushes:
+          type: integer
+        input:
+          type: integer
+        output:
+          type: integer
+        cacheRead:
+          type: integer
+        cacheWrite:
+          type: integer
+        estimatedUsd:
+          type: number
+          description: Estimated at API list prices. Absent when no response had a priced model.
+        partialEstimate:
+          type: boolean
+          description: True when some of the repo's responses came from a model without a price.
+
+    TimeReportUnattributed:
+      description: One day's tokens that belong to no repo (a token file from before attribution).
+      type: object
+      additionalProperties: false
+      required: [date, input, output, cacheRead, cacheWrite]
+      properties:
+        date:
+          type: string
+        input:
+          type: integer
+        output:
+          type: integer
+        cacheRead:
+          type: integer
+        cacheWrite:
+          type: integer
+        estimatedUsd:
+          type: number
+        partialEstimate:
+          type: boolean
+
+    TimeReport:
+      description: |
+        Time per repo over a date range (both ends inclusive, at most 31 days): one
+        row per repo per day with work on it or tokens attributed to it, in date then
+        repo order. `unattributed` lists the days whose tokens could not be split by
+        repo. In reply to requestTimeReport, to the requester only.
+      type: object
+      additionalProperties: false
+      required: [type, from, to, rows, unattributed]
+      properties:
+        type:
+          const: timeReport
+        from:
+          type: string
+        to:
+          type: string
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeReportRow'
+        unattributed:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeReportUnattributed'
 
     AgentSleep:
       description: |
@@ -2044,6 +2133,23 @@ components:
       description: The answer to a permission request.
       type: string
       enum: [allow, deny]
+
+    RequestTimeReport:
+      description: |
+        Ask for the time per repo over a date range (server responds with timeReport,
+        to the requester only). Both dates are local YYYY-MM-DD, inclusive, `from` not
+        after `to`, spanning at most 31 days; anything else is dropped unanswered.
+        Allowed for read-only clients.
+      type: object
+      additionalProperties: false
+      required: [type, from, to]
+      properties:
+        type:
+          const: requestTimeReport
+        from:
+          type: string
+        to:
+          type: string
 
     # ── Supporting schemas ─────────────────────────────────────────
 

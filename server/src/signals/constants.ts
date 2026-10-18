@@ -42,6 +42,14 @@ export const TIMELINE_TEXT_MAX_CHARS = 80;
 export const TOKENS_DIR_NAME = 'tokens';
 /** Writes at most this often (not a sliding debounce: a busy office never stops). */
 export const TOKENS_SAVE_DEBOUNCE_MS = 5_000;
+/** <tokens dir>/<YYYY-MM-DD>.<suffix>: a closed day's responses read back from
+ *  the transcripts (tokenBackfill.ts), kept so the day is scanned once. */
+export const TOKENS_BACKFILL_SUFFIX = 'backfill.json';
+/** A scan of today's transcripts this recent is reused rather than repeated. */
+export const TOKENS_BACKFILL_TODAY_TTL_MS = 5 * 60_000;
+/** How deep under ~/.claude/projects transcripts are looked for: a project
+ *  dir's sessions (depth 1), and a session dir's subagents/ (depth 3). */
+export const TOKENS_BACKFILL_MAX_DEPTH = 3;
 
 // ── Notice board ─────────────────────────────────────────────
 

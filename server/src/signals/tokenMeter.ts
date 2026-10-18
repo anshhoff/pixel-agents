@@ -9,6 +9,12 @@
  * what gets persisted, in ~/.pixel-agents/tokens/<YYYY-MM-DD>.json, so a
  * restart that re-reads a transcript can't count anything twice. Records from
  * another local day, synthetic records and all-zero usage are skipped.
+ *
+ * Each response also keeps the repo of the agent whose transcript it came from
+ * (the office's name for its directory, as the task log uses it), so the time
+ * report (tasks/timeReport.ts) can split a day's tokens by repo. Files written
+ * before that (version 1) have no repo: they still read, and their responses
+ * count as unattributed. usageFor(date) hands either kind to the report.
  */
 
 import * as fs from 'fs';
@@ -27,14 +33,31 @@ export interface TokenMeterOptions {
   onChange: (message: DailyTokens) => void;
 }
 
-/** One response as counted: model, then its token figures. */
-type CountedMessage = [model: string, ...counts: number[]];
+/** One response as counted: model, its token figures, then (version 2) its repo. */
+export type CountedMessage = [
+  model: string,
+  input: number,
+  output: number,
+  cacheRead: number,
+  cacheWrite5m: number,
+  cacheWrite1h: number,
+  fast: number,
+  repo?: string,
+];
 
 interface TokensFile {
-  version: 1;
+  /** 1: no repo per message; 2: a repo ('' when unknown) after the figures. */
+  version: 1 | 2;
   date: string;
-  /** message id -> [model, input, output, cacheRead, cacheWrite5m, cacheWrite1h, fast(0|1)] */
+  /** message id -> [model, input, output, cacheRead, cacheWrite5m, cacheWrite1h, fast(0|1), repo] */
   messages: Record<string, CountedMessage>;
+}
+
+/** One response as the time report sees it: the repo it was attributed to, if any. */
+export interface UsageEntry {
+  repo?: string;
+  model: string;
+  tokens: MessageTokens;
 }
 
 interface UsageRecord {
@@ -78,11 +101,56 @@ export function usageOf(
   return total > 0 ? { id: message.id, model, tokens } : null;
 }
 
-function toCounted(model: string, t: MessageTokens): CountedMessage {
-  return [model, t.input, t.output, t.cacheRead, t.cacheWrite5m, t.cacheWrite1h, t.fast ? 1 : 0];
+/** A response at the largest figures either report gave (a streamed record may
+ *  carry partial output), fast if either said so. */
+export function mergeTokens(before: MessageTokens, next: MessageTokens): MessageTokens {
+  return {
+    input: Math.max(before.input, next.input),
+    output: Math.max(before.output, next.output),
+    cacheRead: Math.max(before.cacheRead, next.cacheRead),
+    cacheWrite5m: Math.max(before.cacheWrite5m, next.cacheWrite5m),
+    cacheWrite1h: Math.max(before.cacheWrite1h, next.cacheWrite1h),
+    fast: before.fast || next.fast,
+  };
 }
 
-function fromCounted(c: CountedMessage): { model: string; tokens: MessageTokens } {
+/** Two counts of the same response (the meter's and a scan's) as one: the
+ *  largest figures, and whichever repo is known. */
+export function mergeCounted(a: CountedMessage, b: CountedMessage): CountedMessage {
+  const ea = fromCounted(a);
+  const eb = fromCounted(b);
+  return toCounted(ea.model, mergeTokens(ea.tokens, eb.tokens), ea.repo ?? eb.repo);
+}
+
+function sameTokens(a: MessageTokens, b: MessageTokens): boolean {
+  return (
+    a.input === b.input &&
+    a.output === b.output &&
+    a.cacheRead === b.cacheRead &&
+    a.cacheWrite5m === b.cacheWrite5m &&
+    a.cacheWrite1h === b.cacheWrite1h &&
+    (a.fast ?? false) === (b.fast ?? false)
+  );
+}
+
+export function toCounted(
+  model: string,
+  t: MessageTokens,
+  repo: string | undefined,
+): CountedMessage {
+  return [
+    model,
+    t.input,
+    t.output,
+    t.cacheRead,
+    t.cacheWrite5m,
+    t.cacheWrite1h,
+    t.fast ? 1 : 0,
+    repo ?? '',
+  ];
+}
+
+export function fromCounted(c: CountedMessage): UsageEntry {
   const [
     model,
     input = 0,
@@ -91,8 +159,10 @@ function fromCounted(c: CountedMessage): { model: string; tokens: MessageTokens 
     cacheWrite5m = 0,
     cacheWrite1h = 0,
     fast = 0,
+    repo = '',
   ] = c;
   return {
+    ...(repo ? { repo } : {}),
     model,
     tokens: { input, output, cacheRead, cacheWrite5m, cacheWrite1h, fast: fast === 1 },
   };
@@ -108,11 +178,31 @@ export class TokenMeter {
   private dirty = false;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  /** Inside batch(): onChange is held back, and this says whether to fire it after. */
+  private batching: { changed: boolean } | null = null;
 
   constructor(private readonly options: TokenMeterOptions) {}
 
-  /** Fold one transcript record in; true when today's totals changed. */
-  record(record: unknown): boolean {
+  /** Many records at once (the transcript backfill): one onChange at the end
+   *  instead of one per record. */
+  batch(fn: () => void): void {
+    if (this.batching) {
+      fn();
+      return;
+    }
+    this.batching = { changed: false };
+    try {
+      fn();
+    } finally {
+      const { changed } = this.batching;
+      this.batching = null;
+      if (changed && !this.disposed) this.options.onChange(this.message());
+    }
+  }
+
+  /** Fold one transcript record in, attributed to `repo` (the agent's, when
+   *  known); true when today's totals changed. */
+  record(record: unknown, repo?: string): boolean {
     if (this.disposed) return false;
     const usage = usageOf(record);
     if (!usage) return false;
@@ -122,28 +212,49 @@ export class TokenMeter {
     // A record from another day (a transcript re-read after midnight, or an old
     // session's tail) is not today's spend.
     if (Number.isFinite(at) && localDateKey(at) !== day.date) return false;
-    const previous = day.messages.get(usage.id);
-    let next = usage.tokens;
+    return this.fold(day, usage.id, usage.model, usage.tokens, repo);
+  }
+
+  /** A response of today's the transcript backfill read (tokenBackfill.ts),
+   *  folded in like record() -- the scan already bucketed it by local day. */
+  absorb(id: string, entry: UsageEntry): boolean {
+    if (this.disposed) return false;
+    const day = this.today(this.options.now());
+    return this.fold(day, id, entry.model, entry.tokens, entry.repo);
+  }
+
+  /** A day's responses by message id: today's from memory, another day's from
+   *  its file. A missing or unreadable day, or an in-memory meter asked about
+   *  another day, is empty. */
+  messagesFor(date: string): ReadonlyMap<string, CountedMessage> {
+    const today = this.today(this.options.now());
+    return date === today.date ? today.messages : this.readDay(date);
+  }
+
+  /** A day's responses for the time report (messagesFor, without the ids). */
+  usageFor(date: string): UsageEntry[] {
+    return [...this.messagesFor(date).values()].map(fromCounted);
+  }
+
+  /** One response into the day, at the largest figures seen; true when anything changed. */
+  private fold(
+    day: Day,
+    id: string,
+    model: string,
+    tokens: MessageTokens,
+    repo: string | undefined,
+  ): boolean {
+    const previous = day.messages.get(id);
+    let next = tokens;
     if (previous) {
-      const before = fromCounted(previous).tokens;
-      next = {
-        input: Math.max(before.input, next.input),
-        output: Math.max(before.output, next.output),
-        cacheRead: Math.max(before.cacheRead, next.cacheRead),
-        cacheWrite5m: Math.max(before.cacheWrite5m, next.cacheWrite5m),
-        cacheWrite1h: Math.max(before.cacheWrite1h, next.cacheWrite1h),
-        fast: before.fast || next.fast,
-      };
-      const same =
-        next.input === before.input &&
-        next.output === before.output &&
-        next.cacheRead === before.cacheRead &&
-        next.cacheWrite5m === before.cacheWrite5m &&
-        next.cacheWrite1h === before.cacheWrite1h &&
-        next.fast === before.fast;
-      if (same) return false;
+      const { repo: knownRepo, tokens: before } = fromCounted(previous);
+      // A response keeps its repo once it has one (a re-read after an upgrade
+      // may add it to a response counted without).
+      repo ??= knownRepo;
+      next = mergeTokens(before, next);
+      if (sameTokens(next, before) && repo === knownRepo) return false;
     }
-    day.messages.set(usage.id, toCounted(usage.model, next));
+    day.messages.set(id, toCounted(model, next, repo));
     this.changed();
     return true;
   }
@@ -209,7 +320,8 @@ export class TokenMeter {
   }
 
   private changed(): void {
-    this.options.onChange(this.message());
+    if (this.batching) this.batching.changed = true;
+    else this.options.onChange(this.message());
     this.dirty = true;
     if (this.options.dir === null || this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
@@ -233,48 +345,73 @@ export class TokenMeter {
   }
 
   private readDay(date: string): Map<string, CountedMessage> {
-    const messages = new Map<string, CountedMessage>();
-    if (this.options.dir === null) return messages;
-    const file = this.fileFor(this.options.dir, date);
-    try {
-      const raw = JSON.parse(fs.readFileSync(file, 'utf-8')) as Partial<TokensFile>;
-      const stored = raw && typeof raw.messages === 'object' && raw.messages ? raw.messages : {};
-      for (const [id, entry] of Object.entries(stored)) {
-        if (!Array.isArray(entry) || typeof entry[0] !== 'string') continue;
-        const counts = entry.slice(1).map(num);
-        messages.set(id, [entry[0], ...counts]);
-      }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn(`[Pixel Agents] Ignoring unreadable token totals ${file}:`, err);
-      }
-    }
-    return messages;
+    if (this.options.dir === null) return new Map();
+    return readMessagesFile(this.fileFor(this.options.dir, date));
   }
 
-  /** Atomic write (tmp + rename). Returns false, logged, on failure. */
   private writeDay(dir: string, day: Day): boolean {
-    const file = this.fileFor(dir, day.date);
-    const data: TokensFile = {
-      version: 1,
-      date: day.date,
-      messages: Object.fromEntries(day.messages),
-    };
-    const tmp = `${file}.${process.pid}.tmp`;
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(tmp, JSON.stringify(data), 'utf-8');
-      fs.renameSync(tmp, file);
-      return true;
-    } catch (err) {
-      console.error(`[Pixel Agents] Failed to write token totals ${file}:`, err);
-      try {
-        fs.rmSync(tmp, { force: true });
-      } catch {
-        /* nothing to clean up */
-      }
-      return false;
+    return writeMessagesFile(this.fileFor(dir, day.date), day.date, day.messages);
+  }
+}
+
+// ── Files ────────────────────────────────────────────────────
+
+/**
+ * A per-day messages file (the meter's own, or a backfill cache): message id
+ * -> counted response. Version 1 entries have no repo. A missing file is
+ * empty; an unreadable one is logged and empty.
+ */
+export function readMessagesFile(file: string): Map<string, CountedMessage> {
+  const messages = new Map<string, CountedMessage>();
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf-8')) as Partial<TokensFile>;
+    const stored = raw && typeof raw.messages === 'object' && raw.messages ? raw.messages : {};
+    for (const [id, entry] of Object.entries(stored)) {
+      if (!Array.isArray(entry) || typeof entry[0] !== 'string') continue;
+      // Six figures, then (version 2) the repo; a version 1 entry ends at the figures.
+      const [input = 0, output = 0, cacheRead = 0, cacheWrite5m = 0, cacheWrite1h = 0, fast = 0] =
+        entry.slice(1, 7).map(num);
+      const repo = typeof entry[7] === 'string' ? entry[7] : '';
+      messages.set(id, [
+        entry[0],
+        input,
+        output,
+        cacheRead,
+        cacheWrite5m,
+        cacheWrite1h,
+        fast,
+        repo,
+      ]);
     }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`[Pixel Agents] Ignoring unreadable token totals ${file}:`, err);
+    }
+  }
+  return messages;
+}
+
+/** Atomic write (tmp + rename). Returns false, logged, on failure. */
+export function writeMessagesFile(
+  file: string,
+  date: string,
+  messages: ReadonlyMap<string, CountedMessage>,
+): boolean {
+  const data: TokensFile = { version: 2, date, messages: Object.fromEntries(messages) };
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(data), 'utf-8');
+    fs.renameSync(tmp, file);
+    return true;
+  } catch (err) {
+    console.error(`[Pixel Agents] Failed to write token totals ${file}:`, err);
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      /* nothing to clean up */
+    }
+    return false;
   }
 }
 

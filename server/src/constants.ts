@@ -262,6 +262,9 @@ export const LOCAL_TASK_MACHINE = 'local';
 export const MANAGER_DIR_NAME = 'manager';
 /** Subdirectory of ~/.pixel-agents holding one <YYYY-MM-DD>.json report per day. */
 export const REPORTS_DIR_NAME = 'reports';
+/** Longest range (days, both ends inclusive) a requestTimeReport may ask for: a
+ *  month. Each day is a task file and a token file read, so the cap bounds the work. */
+export const TIME_REPORT_MAX_DAYS = 31;
 /** In REPORTS_DIR_NAME: { lastScheduledDate } -- the 19:00 run fires once per day across restarts. */
 export const REPORT_SCHEDULE_FILE_NAME = 'scheduled.json';
 /** Local hour the daily report is written at. */

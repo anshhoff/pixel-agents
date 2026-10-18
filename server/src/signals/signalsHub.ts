@@ -19,21 +19,33 @@ import * as path from 'path';
 
 import type { AgentTimeline, NoticeItem, WorkPhase } from '../../../core/src/messages.js';
 import type { AgentStateStore } from '../agentStateStore.js';
-import { LAYOUT_FILE_DIR } from '../constants.js';
+import { LAYOUT_FILE_DIR, LOCAL_SESSIONS_PROJECTS_SUBPATH } from '../constants.js';
 import { classifyTool } from '../progress/phase.js';
 import type { Landed, ProgressTracker } from '../progress/progressTracker.js';
+import { repoOf } from '../tasks/taskLedger.js';
 import { formatToolStatus } from '../transcriptParser.js';
 import { LOOP_CHECK_INTERVAL_MS, TOKENS_DIR_NAME } from './constants.js';
 import { localDateKey } from './localDay.js';
 import { LoopDetector } from './loopDetector.js';
 import { type GhRunner, NoticeBoard } from './noticeBoard.js';
 import { Timeline } from './timeline.js';
-import { TokenMeter } from './tokenMeter.js';
+import { TokenBackfill } from './tokenBackfill.js';
+import {
+  type CountedMessage,
+  fromCounted,
+  mergeCounted,
+  TokenMeter,
+  type UsageEntry,
+} from './tokenMeter.js';
 import { isFailedToolEnd, TroubleTracker } from './trouble.js';
 
 export interface SignalsHubOptions {
   /** Per-day token files: ~/.pixel-agents/tokens by default; null keeps them in memory. */
   tokensDir?: string | null;
+  /** The transcripts the token backfill reads (tokenBackfill.ts): ~/.claude/projects
+   *  by default when the token files persist, none when they don't; null turns the
+   *  backfill off. Tests pass a temp dir. */
+  projectsDir?: string | null;
   /** The notice board's `gh` runner; null turns the board off. */
   noticeBoard?: { run?: GhRunner } | null;
   /** Clock (tests). */
@@ -56,6 +68,7 @@ export class SignalsHub {
   private readonly loops = new LoopDetector();
   private readonly timeline: Timeline;
   private readonly tokens: TokenMeter;
+  private readonly backfill: TokenBackfill | null;
   private readonly board: NoticeBoard | null;
   private readonly now: () => number;
   private readonly status = new Map<number, 'active' | 'waiting'>();
@@ -71,14 +84,26 @@ export class SignalsHub {
   ) {
     this.now = options.now ?? Date.now;
     this.timeline = new Timeline(this.now);
+    const tokensDir =
+      options.tokensDir === undefined
+        ? path.join(os.homedir(), LAYOUT_FILE_DIR, TOKENS_DIR_NAME)
+        : options.tokensDir;
     this.tokens = new TokenMeter({
-      dir:
-        options.tokensDir === undefined
-          ? path.join(os.homedir(), LAYOUT_FILE_DIR, TOKENS_DIR_NAME)
-          : options.tokensDir,
+      dir: tokensDir,
       now: this.now,
       onChange: (message) => this.send({ ...message }),
     });
+    // An in-memory meter (a bare store: tests) never reads the machine's transcripts uninvited.
+    const projectsDir =
+      options.projectsDir === undefined
+        ? tokensDir === null
+          ? null
+          : path.join(os.homedir(), ...LOCAL_SESSIONS_PROJECTS_SUBPATH)
+        : options.projectsDir;
+    this.backfill =
+      projectsDir === null
+        ? null
+        : new TokenBackfill({ projectsDir, cacheDir: tokensDir, now: this.now });
     this.board =
       options.noticeBoard === null
         ? null
@@ -98,7 +123,9 @@ export class SignalsHub {
     return !this.disposed && store === this.store;
   }
 
-  /** Start the timers: the stall check, and the notice board's polling. */
+  /** Start the timers: the stall check, and the notice board's polling. Also
+   *  reads today's transcripts once, so the TODAY strip counts the responses
+   *  made before the board was up. */
   start(): void {
     if (this.disposed || this.loopTimer) return;
     this.loopTimer = setInterval(() => {
@@ -106,6 +133,7 @@ export class SignalsHub {
     }, LOOP_CHECK_INTERVAL_MS);
     this.loopTimer.unref?.();
     this.board?.start();
+    if (this.backfill) void this.timeReportUsage([localDateKey(this.now())]);
   }
 
   dispose(): void {
@@ -113,6 +141,7 @@ export class SignalsHub {
     if (this.loopTimer) clearInterval(this.loopTimer);
     this.loopTimer = null;
     this.board?.stop();
+    this.backfill?.dispose();
     this.tokens.dispose();
     this.store.off('broadcast', this.onBroadcast);
     this.store.off('agentAdded', this.onAgentAdded);
@@ -163,8 +192,10 @@ export class SignalsHub {
 
   /**
    * A transcript record. Usage counts for every transcript (sub-agents' shadow
-   * transcripts included: their spend is real). Tool starts and results count
-   * only when `toolsFromTranscript` -- the agent's hooks don't report them.
+   * transcripts included: their spend is real), attributed to the repo of the
+   * agent it belongs to -- its lead's for a teammate or sub-agent, as the task
+   * log credits their work. Tool starts and results count only when
+   * `toolsFromTranscript` -- the agent's hooks don't report them.
    */
   onTranscriptRecord(
     store: AgentStateStore,
@@ -173,7 +204,7 @@ export class SignalsHub {
     toolsFromTranscript: boolean,
   ): void {
     if (this.disposed) return;
-    this.tokens.record(record);
+    this.tokens.record(record, repoForTokens(store, id));
     if (!toolsFromTranscript || !this.tracks(store)) return;
     const r = record as { type?: unknown; message?: { content?: unknown }; content?: unknown };
     const content = r?.message?.content ?? r?.content;
@@ -207,6 +238,41 @@ export class SignalsHub {
   timelineMessage(store: AgentStateStore, id: unknown): AgentTimeline | null {
     if (!this.tracks(store) || typeof id !== 'number' || !store.has(id)) return null;
     return this.timeline.message(id);
+  }
+
+  /**
+   * Each day's responses with their repos, for the time report
+   * (tasks/timeReport.ts): what the meter saw, plus what the transcripts hold
+   * (tokenBackfill.ts) -- the two merged by message id. Today's scan is folded
+   * into the meter itself, so dailyTokens (the TODAY strip) counts it too.
+   * Never rejects; a day with nothing is left out.
+   */
+  async timeReportUsage(dates: readonly string[]): Promise<Record<string, UsageEntry[]>> {
+    const usage: Record<string, UsageEntry[]> = {};
+    if (this.disposed) return usage;
+    const scanned = this.backfill ? await this.backfill.usageFor(dates) : new Map();
+    if (this.disposed) return usage;
+    const today = localDateKey(this.now());
+    for (const date of dates) {
+      const found: ReadonlyMap<string, CountedMessage> | undefined = scanned.get(date);
+      if (date === today) {
+        if (found) {
+          this.tokens.batch(() => {
+            for (const [id, counted] of found) this.tokens.absorb(id, fromCounted(counted));
+          });
+        }
+        const todays = this.tokens.usageFor(date);
+        if (todays.length > 0) usage[date] = todays;
+        continue;
+      }
+      const merged = new Map<string, CountedMessage>(found ?? []);
+      for (const [id, counted] of this.tokens.messagesFor(date)) {
+        const scannedToo = merged.get(id);
+        merged.set(id, scannedToo ? mergeCounted(scannedToo, counted) : counted);
+      }
+      if (merged.size > 0) usage[date] = [...merged.values()].map(fromCounted);
+    }
+    return usage;
   }
 
   /** What a connecting client is sent: trouble and loops in force, today's tokens, the board. */
@@ -308,4 +374,14 @@ export class SignalsHub {
 
 function boardMessage(items: NoticeItem[]): Message {
   return { type: 'noticeBoard', items };
+}
+
+/** The repo a transcript's responses count toward: the agent's lead's while the
+ *  lead is on the board (a teammate's or sub-agent's spend is its lead's work),
+ *  else its own; undefined for an agent the store doesn't have. */
+function repoForTokens(store: AgentStateStore, id: number): string | undefined {
+  const agent = store.get(id);
+  if (!agent) return undefined;
+  const lead = agent.leadAgentId !== undefined ? store.get(agent.leadAgentId) : undefined;
+  return repoOf(lead ?? agent);
 }
