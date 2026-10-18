@@ -39,6 +39,12 @@ import {
 import type { HookEvent } from './hookEventHandler.js';
 import { HookEventHandler } from './hookEventHandler.js';
 import {
+  getInboxTracker,
+  InboxTracker,
+  type InboxTrackerOptions,
+  setInboxTracker,
+} from './inbox/inboxTracker.js';
+import {
   getLocalSessionWatcher,
   LocalSessionWatcher,
   type LocalSessionWatcherOptions,
@@ -75,6 +81,8 @@ export interface AgentRuntimeOptions {
   /** Session list, clock and home dir for the LocalSessionWatcher (tests).
    *  Default: `claude agents --json`, Date.now, os.homedir. */
   localSessions?: LocalSessionWatcherOptions;
+  /** Clock and transcript reader for the inbox tracker (tests). */
+  inbox?: InboxTrackerOptions;
 }
 
 export class AgentRuntime {
@@ -108,6 +116,8 @@ export class AgentRuntime {
   /** Keeps every open local session on the board and puts idle ones to sleep
    *  (see localSessions.ts). Polls only once started -- the standalone CLI does. */
   readonly localSessions: LocalSessionWatcher;
+  /** Needs-you inbox: Open-in-Claude links + usage-limit pauses (inbox/). */
+  readonly inbox: InboxTracker;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
 
@@ -133,6 +143,8 @@ export class AgentRuntime {
       options.localSessions,
     );
     setLocalSessionWatcher(this.localSessions);
+    this.inbox = new InboxTracker(store, options.inbox);
+    setInboxTracker(this.inbox);
 
     // Wire module-level dependencies
     setDismissalTracker(this.dismissalTracker);
@@ -706,6 +718,8 @@ export class AgentRuntime {
     this.subagentWatch.dispose();
     this.progress.dispose();
     if (getProgressTracker() === this.progress) setProgressTracker(null);
+    this.inbox.dispose();
+    if (getInboxTracker() === this.inbox) setInboxTracker(null);
 
     if (this.projectScanTimer.current) {
       clearInterval(this.projectScanTimer.current);

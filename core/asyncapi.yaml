@@ -111,6 +111,9 @@ components:
         - $ref: '#/components/schemas/TaskUpdated'
         - $ref: '#/components/schemas/ReportReady'
         - $ref: '#/components/schemas/Report'
+        # Needs-you inbox: Open in Claude + usage limits
+        - $ref: '#/components/schemas/AgentLink'
+        - $ref: '#/components/schemas/AgentLimit'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -539,6 +542,57 @@ components:
           type: integer
         background:
           type: boolean
+
+    AgentLink:
+      description: |
+        How the user gets back to an agent's session. `url` is the claude.ai/code
+        page of its Remote Control session (only when the transcript recorded one;
+        always https://claude.ai/code/session_...). `resumeCommand` resumes it in
+        a terminal: `cd "<cwd>" && claude --resume <sessionId>`, or the bare
+        resume for a remote session (whose cwd is on another machine). Sent for
+        every agent on connect, and again whenever it changes.
+      type: object
+      additionalProperties: false
+      required: [type, id, resumeCommand]
+      properties:
+        type:
+          const: agentLink
+        id:
+          type: integer
+        url:
+          type: string
+        resumeCommand:
+          type: string
+
+    LimitReason:
+      description: |
+        Which limit paused an agent: the 5-hour session window, the weekly cap,
+        an unspecified usage limit, or a plain API rate limit.
+      type: string
+      enum: [session, weekly, usage, rate]
+
+    AgentLimit:
+      description: |
+        An agent's turn stopped on a usage limit (paused) or the pause ended
+        (paused false: the limit reset, or the agent is working again). Detected
+        best-effort from transcript API errors, the StopFailure hook and limit
+        notifications. `resetsAt` (epoch ms) is when the limit lifts, when known.
+        A paused agent is not "waiting on you". Pauses in force are re-sent on
+        connect.
+      type: object
+      additionalProperties: false
+      required: [type, id, paused]
+      properties:
+        type:
+          const: agentLimit
+        id:
+          type: integer
+        paused:
+          type: boolean
+        reason:
+          $ref: '#/components/schemas/LimitReason'
+        resetsAt:
+          type: integer
 
     TaskStatus:
       type: string

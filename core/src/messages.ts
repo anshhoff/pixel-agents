@@ -34,6 +34,8 @@ export type ServerMessage =
   | TaskUpdated
   | ReportReady
   | Report
+  | AgentLink
+  | AgentLimit
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -317,6 +319,23 @@ export interface Report {
   aiWritten?: boolean;
   writing?: boolean;
 }
+
+export interface AgentLink {
+  type: 'agentLink';
+  id: number;
+  url?: string;
+  resumeCommand: string;
+}
+
+export interface AgentLimit {
+  type: 'agentLimit';
+  id: number;
+  paused: boolean;
+  reason?: LimitReason;
+  resetsAt?: number;
+}
+
+export type LimitReason = 'session' | 'weekly' | 'usage' | 'rate';
 
 export interface LayoutLoaded {
   type: 'layoutLoaded';

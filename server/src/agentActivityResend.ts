@@ -1,4 +1,5 @@
 import type { AgentStateStore } from './agentStateStore.js';
+import { getInboxTracker } from './inbox/inboxTracker.js';
 import { getLocalSessionWatcher } from './localSessions.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { getProgressTracker } from './transcriptParser.js';
@@ -12,8 +13,8 @@ import { getProgressTracker } from './transcriptParser.js';
  * 3. Background tools with runInBackground + isTeammateSpawn flags, skipping promoted spawns
  * 4. Waiting status
  * 5. Context usage
- * Then, once for the office: every agent's stage track and today's totals,
- * and an agentSleep for each sleeping agent.
+ * Then, once for the office: the inbox's links and pauses, every agent's
+ * stage track and today's totals, and an agentSleep for each sleeping agent.
  */
 export function resendAgentActivity(
   send: (message: Record<string, unknown>) => void,
@@ -90,8 +91,18 @@ export function resendAgentActivity(
     }
   }
 
-  // Work progress: an agentProgress per agent, then dailyStats. Looked up here
+  // Needs-you inbox (inbox/inboxTracker.ts): every agent's agentLink, then an
+  // agentLimit for each agent paused by a usage limit right now. Looked up here
   // rather than passed in, so both surfaces' resends carry it.
+  const inbox = getInboxTracker();
+  if (inbox?.tracks(store)) {
+    for (const message of inbox.snapshot()) {
+      send({ ...message });
+    }
+  }
+
+  // Work progress: an agentProgress per agent, then dailyStats. Looked up the
+  // same way.
   const progress = getProgressTracker();
   if (progress?.tracks(store)) {
     for (const message of progress.snapshot()) {
