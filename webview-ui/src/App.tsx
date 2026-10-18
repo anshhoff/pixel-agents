@@ -62,6 +62,10 @@ import { NoticeBoardOverlay } from './signals/NoticeBoardOverlay.js';
 import { TimelineCard } from './signals/TimelineCard.js';
 import { installTestHooks } from './testHooks.js';
 import { transport } from './transport/index.js';
+import { FIT_MARGINS_TV, TV_SAFE_AREA_PADDING } from './tvMode/constants.js';
+import { TvExitButton, TvModeButton } from './tvMode/TvControls.js';
+import { showsIn } from './tvMode/tvModeState.js';
+import { useTvAutoFit, useTvMode } from './tvMode/useTvMode.js';
 
 // Game state lives outside React — updated imperatively by message handlers
 const officeStateRef = { current: null as OfficeState | null };
@@ -387,6 +391,18 @@ function App() {
 
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // TV mode: the office alone, fullscreen, every control hidden (tvMode/).
+  // Browser board only; while editing, T is the editor's toggle-state key.
+  const tv = useTvMode({ enabled: isBrowserRuntime, keysEnabled: !editor.isEditMode });
+  const { enter: enterTvMode } = tv;
+  const enterTv = useCallback(() => {
+    // The editor's panels are controls too, and its tile actions would still
+    // fire on a click: leave it first (as its own Esc does; unsaved edits stay
+    // in the office until saved).
+    if (editor.isEditMode) editor.handleToggleEditMode();
+    enterTvMode();
+  }, [editor, enterTvMode]);
+
   // Fit: the Fit button everywhere; auto-fit (first layout, layout resize,
   // viewport resize — until the user zooms or pans) in the browser only —
   // the TV / phone board. VS Code panels keep their DPR-based default zoom.
@@ -396,15 +412,19 @@ function App() {
     zoom: editor.zoom,
     setZoom: editor.handleZoomChange,
     panRef: editor.panRef,
-    margins: isMobile
-      ? FIT_MARGINS_MOBILE
-      : officeReadOnly
-        ? FIT_MARGINS_DESKTOP_READ_ONLY
-        : FIT_MARGINS_DESKTOP,
+    margins: tv.tvMode
+      ? FIT_MARGINS_TV
+      : isMobile
+        ? FIT_MARGINS_MOBILE
+        : officeReadOnly
+          ? FIT_MARGINS_DESKTOP_READ_ONLY
+          : FIT_MARGINS_DESKTOP,
     autoFit: isBrowserRuntime,
     layoutReady,
     isEditMode: editor.isEditMode,
   });
+  // TV mode frames the whole office on entry and on every window resize.
+  useTvAutoFit(tv.tvMode, cameraFit.fit);
 
   const [editorTickForKeyboard, setEditorTickForKeyboard] = useState(0);
   useEditorKeyboard(
@@ -601,11 +621,12 @@ function App() {
           {/* Mobile: pinch replaces the zoom buttons (Fit floats top-left
                 instead), and the toolbar's jobs move to the card bar (+) and
                 the floating Settings button. */}
-          {!isMobile && (
+          {!isMobile && showsIn('zoomControls', tv.tvMode) && (
             <ZoomControls
               zoom={editor.zoom}
               onZoomChange={cameraFit.userZoom}
               onFit={cameraFit.fit}
+              extra={isBrowserRuntime ? <TvModeButton onClick={enterTv} /> : undefined}
             />
           )}
 
@@ -729,11 +750,14 @@ function App() {
             <DailyStrip
               stats={dailyStats}
               compact={isMobile}
-              aboveToolbar={!isMobile && !officeReadOnly}
-              action={<TasksButton compact={isMobile} />}
+              aboveToolbar={!isMobile && !officeReadOnly && !tv.tvMode}
+              action={
+                showsIn('tasksButton', tv.tvMode) ? <TasksButton compact={isMobile} /> : undefined
+              }
               leading={
                 <InboxStripItems
                   compact={isMobile}
+                  passive={!showsIn('inboxButton', tv.tvMode)}
                   agentIds={agents}
                   agentTools={agentTools}
                   agentStatuses={agentStatuses}
@@ -749,11 +773,11 @@ function App() {
           {/* Background agents: a panel under the zoom controls (desktop,
               hidden while editing, like the strip: the editor's panels need the
               room), a "🤖 N" chip bottom-right on phones. */}
-          {isMobile ? (
-            <RemoteWorkersChip workers={remoteWorkers} />
-          ) : (
-            !editor.isEditMode && <RemoteWorkersPanel workers={remoteWorkers} />
-          )}
+          {isMobile
+            ? showsIn('remoteWorkersChip', tv.tvMode) && (
+                <RemoteWorkersChip workers={remoteWorkers} />
+              )
+            : !editor.isEditMode && <RemoteWorkersPanel workers={remoteWorkers} />}
         </>
       ) : (
         <DebugView
@@ -771,7 +795,7 @@ function App() {
           message), NOT the hooksEnabled preference: hooksEnabled defaults true
           while first-run consent is still pending, and announcing "Instant
           Detection Active" before anything is installed would be a lie. */}
-      {showHooksTooltip && (
+      {showHooksTooltip && showsIn('toasts', tv.tvMode) && (
         <Tooltip
           title="Instant Detection Active"
           position="top-right"
@@ -796,7 +820,7 @@ function App() {
         </Tooltip>
       )}
 
-      {officeReadOnly && (
+      {officeReadOnly && showsIn('viewOnlyBanner', tv.tvMode) && (
         <div className="absolute mobile-safe-top left-1/2 -translate-x-1/2 z-10 text-sm text-text-muted pointer-events-none select-none whitespace-nowrap">
           View only
         </div>
@@ -804,7 +828,7 @@ function App() {
 
       {/* A read-only office gets no toolbar: launching, layout editing and every
           setting would be refused by the server anyway. */}
-      {!isMobile && !officeReadOnly && (
+      {!isMobile && !officeReadOnly && showsIn('bottomToolbar', tv.tvMode) && (
         <BottomToolbar
           isEditMode={editor.isEditMode}
           onToggleEditMode={editor.handleToggleEditMode}
@@ -821,7 +845,7 @@ function App() {
       {/* Mobile: Fit and Settings float top-left (the layout editor stays
             desktop-only — its tools are drag/hover-driven). Fit shows in a
             read-only office too: looking around is not a change. */}
-      {isMobile && !isDebugMode && (
+      {isMobile && !isDebugMode && showsIn('settingsButton', tv.tvMode) && (
         <div className="absolute mobile-safe-top left-8 z-20 flex items-center gap-6">
           <Button
             size="sm"
@@ -832,6 +856,7 @@ function App() {
           >
             <FitIcon />
           </Button>
+          <TvModeButton compact onClick={enterTv} />
           {!officeReadOnly && (
             <Button
               size="sm"
@@ -845,15 +870,17 @@ function App() {
         </div>
       )}
 
-      <VersionIndicator
-        currentVersion={extensionVersion}
-        lastSeenVersion={lastSeenVersion}
-        hideUpdateNotice={officeReadOnly}
-        onDismiss={handleWhatsNewDismiss}
-        onOpenChangelog={handleOpenChangelog}
-      />
+      {showsIn('versionIndicator', tv.tvMode) && (
+        <VersionIndicator
+          currentVersion={extensionVersion}
+          lastSeenVersion={lastSeenVersion}
+          hideUpdateNotice={officeReadOnly}
+          onDismiss={handleWhatsNewDismiss}
+          onOpenChangelog={handleOpenChangelog}
+        />
+      )}
 
-      {intro && (
+      {intro && showsIn('introBubble', tv.tvMode) && (
         <IntroBubble
           officeState={officeState}
           headline={intro.headline}
@@ -876,6 +903,9 @@ function App() {
       )}
 
       <ConnectionIndicator />
+
+      {/* TV mode's one control: Exit, top-right, while the viewer is active. */}
+      {tv.tvMode && <TvExitButton visible={tv.active} onClick={tv.exit} />}
     </div>
   );
 
@@ -883,11 +913,15 @@ function App() {
     // Desktop: split view — the office region flexes to fill the space left of
     // the terminal panel. Mobile: a column — the sliding office/terminal track
     // on top, the agent-card bar pinned along the bottom.
+    // TV mode: padded by the safe-area insets; idle, the cursor hides (.tv-idle).
     <div
-      className={`w-full h-full relative overflow-hidden flex ${isMobile ? 'flex-col' : ''}`}
-      style={
-        isMobile && keyboard.clampHeight !== null ? { height: keyboard.clampHeight } : undefined
-      }
+      className={`w-full h-full relative overflow-hidden flex ${isMobile ? 'flex-col' : ''} ${tv.tvMode && !tv.active ? 'tv-idle' : ''}`}
+      style={{
+        ...(isMobile && keyboard.clampHeight !== null
+          ? { height: keyboard.clampHeight }
+          : undefined),
+        ...(tv.tvMode ? TV_SAFE_AREA_PADDING : undefined),
+      }}
     >
       {isMobile ? (
         <MobileShell
@@ -904,6 +938,7 @@ function App() {
           onEditDirectory={directoryEditor.edit}
           onCloseAgent={handleCloseAgent}
           keyboardOpen={keyboard.keyboardOpen}
+          tvMode={tv.tvMode}
         />
       ) : (
         <>
@@ -917,8 +952,10 @@ function App() {
               Otherwise (VS Code, or a watch-only standalone session) the card
               bar stands alone with every agent in the office, external sessions
               included — the at-a-glance "who needs attention" strip, with a
-              click raising the agent's editor terminal where there is one. */}
-          {terminalAvailable ? (
+              click raising the agent's editor terminal where there is one.
+
+              TV mode hides both: the office takes the whole width. */}
+          {terminalAvailable && showsIn('terminalDrawer', tv.tvMode) ? (
             <TerminalDrawer
               agentIds={terminalAgentIds}
               shownAgentId={terminalDrawer.shownAgentId}
@@ -933,7 +970,8 @@ function App() {
               onStatusChange={terminalDrawer.onStatusChange}
             />
           ) : (
-            !isDebugMode && (
+            !isDebugMode &&
+            showsIn('agentCardBar', tv.tvMode) && (
               <AgentCardBar
                 agentIds={officeAgents}
                 focusedAgentId={focusedAgentId}
@@ -1071,9 +1109,10 @@ function App() {
         }}
         onExportLayout={handleExportLayout}
         onImportLayout={handleImportLayout}
+        onEnterTvMode={isBrowserRuntime ? enterTv : undefined}
       />
 
-      {showMigrationNotice && (
+      {showMigrationNotice && showsIn('toasts', tv.tvMode) && (
         <MigrationNotice onDismiss={() => setMigrationNoticeDismissed(true)} />
       )}
     </div>

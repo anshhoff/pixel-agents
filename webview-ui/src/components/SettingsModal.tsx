@@ -42,6 +42,8 @@ interface SettingsModalProps {
   onExportLayout: () => void;
   /** Browser-native layout import from a chosen file (standalone only). */
   onImportLayout: (file: File) => void;
+  /** Enter TV mode (fullscreen, controls hidden). Browser board only. */
+  onEnterTvMode?: () => void;
 }
 
 export function SettingsModal({
@@ -67,6 +69,7 @@ export function SettingsModal({
   onToggleShowHostDirectories,
   onExportLayout,
   onImportLayout,
+  onEnterTvMode,
 }: SettingsModalProps) {
   const [soundLocal, setSoundLocal] = useState(isSoundEnabled);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -74,6 +77,19 @@ export function SettingsModal({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Settings">
+      {/* TV mode: the office alone, fullscreen. The modal closes with it —
+          it is one of the controls TV mode hides. */}
+      {onEnterTvMode && (
+        <MenuItem
+          onClick={() => {
+            onEnterTvMode();
+            onClose();
+          }}
+          right={<span className="text-xs text-text-muted">T</span>}
+        >
+          TV mode
+        </MenuItem>
+      )}
       {/* Open Sessions Folder opens an OS file manager — impossible in the browser. */}
       {!isBrowserRuntime && (
         <MenuItem
