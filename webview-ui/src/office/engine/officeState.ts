@@ -1,3 +1,4 @@
+import type { DailyStats } from '../../../../core/src/messages.js';
 import { pickDiversePalette } from '../../../../core/src/paletteUtils.js';
 import {
   ASHTRAY_BUTT_SLOTS,
@@ -47,12 +48,14 @@ import type {
 import { CharacterState, Direction, PetState, TILE_SIZE } from '../types.js';
 import type { OfficeZones } from '../zones.js';
 import { isRoutedZoneLabel, NO_ZONES, parseZones, toZoneLabel, ZoneLabel } from '../zones.js';
+import { Celebrations } from './celebrations.js';
 import { createCharacter, isSettledAtZoneTarget, updateCharacter } from './characters.js';
 import { advanceMatrixEffect, startMatrixEffect } from './matrixEffectState.js';
 import { createPet, updatePet } from './petEntity.js';
 import { anchorTile, closestFreeSeat, helperSeat } from './seatPlacement.js';
 import type { SmokeBreakState } from './smokeBreaks.js';
 import { NO_SMOKE_BREAK, onSmokeBreak, stepSmokeBreak } from './smokeBreaks.js';
+import { withTrophies } from './trophyWall.js';
 import { ASHTRAY_BUTT_SPRITE, ashtrayButtCount, isSmoking, socialFacing } from './zoneEffects.js';
 import type {
   DestinationIntent,
@@ -157,6 +160,8 @@ export class OfficeState {
   nowMs: () => number = () => Date.now();
   /** The mid-work break chance's RNG ([0, 1), like Math.random). Tests seed it. */
   zoneRandom: () => number = () => Math.random();
+  /** Phase B: bells, confetti and the trophy wall's tally (celebrations.ts). */
+  readonly celebrations = new Celebrations();
 
   /**
    * directoryName → list of Area labels that Directory belongs to.
@@ -1174,17 +1179,19 @@ export class OfficeState {
     }
 
     // ...and its ashtray fills with butts while people wait on the user.
-    const butts = this.ashtrayButtInstances();
+    // Phase B: a celebration bell rings on a desk; trophies stand on the shelves.
+    const butts = [...this.ashtrayButtInstances(), ...this.celebrations.bellInstances()];
+    const placed = this.placedWithTrophies();
 
     if (autoOnTiles.size === 0) {
-      const plain = layoutToFurnitureInstances(this.layout.furniture);
+      const plain = layoutToFurnitureInstances(placed);
       this.furniture = butts.length > 0 ? [...plain, ...butts] : plain;
       return;
     }
 
     // Build modified furniture list with auto-state and animation applied
     const animFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
-    const modifiedFurniture: PlacedFurniture[] = this.layout.furniture.map((item) => {
+    const modifiedFurniture: PlacedFurniture[] = placed.map((item) => {
       const entry = getCatalogEntry(item.type);
       if (!entry) return item;
       // Check if any tile of this furniture overlaps an auto-on tile
@@ -1210,6 +1217,31 @@ export class OfficeState {
 
     const instances = layoutToFurnitureInstances(modifiedFurniture);
     this.furniture = butts.length > 0 ? [...instances, ...butts] : instances;
+  }
+
+  // ── Living office phase B: celebrations (celebrations.ts) ──────
+  /** A push or PR landed: bell + confetti at whoever shipped it; the trophy
+   *  wall follows the day's tally. Returns how many new ship events there were. */
+  celebrate(stats: DailyStats): number {
+    const events = this.celebrations.onDailyStats(stats, {
+      nowMs: this.nowMs(),
+      characters: this.characters,
+      seats: this.seats,
+      furniture: this.layout.furniture,
+      entryOf: getCatalogEntry,
+    });
+    this.rebuildFurnitureInstances();
+    return events.length;
+  }
+
+  /** The layout's furniture plus today's trophies (runtime-only, never saved). */
+  private placedWithTrophies(): PlacedFurniture[] {
+    const footprint = (type: string) => {
+      const e = getCatalogEntry(type);
+      return e ? { w: e.footprintW, h: e.footprintH } : undefined;
+    };
+    const { prCount, pushCount } = this.celebrations;
+    return withTrophies(this.layout, footprint, prCount, pushCount);
   }
 
   setAgentTool(id: number, tool: string | null): void {
@@ -1891,7 +1923,8 @@ export class OfficeState {
     const prevFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
     this.furnitureAnimTimer += dt;
     const newFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
-    if (newFrame !== prevFrame) {
+    // Phase B: a bell coming or going changes the furniture list too.
+    if (this.celebrations.update(dt) || newFrame !== prevFrame) {
       this.rebuildFurnitureInstances();
     }
     this.officeClock += dt;

@@ -16,6 +16,7 @@ import { pastDragThreshold } from '../camera.js';
 import { furnitureAt } from '../editor/editorActions.js';
 import { buildEditorRenderState } from '../editor/editorRenderState.js';
 import type { EditorState } from '../editor/editorState.js';
+import { renderConfetti } from '../engine/celebrationRender.js';
 import { startGameLoop } from '../engine/gameLoop.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type {
@@ -248,6 +249,7 @@ export function OfficeCanvas({
           officeState.pets,
         );
         offsetRef.current = { x: offsetX, y: offsetY };
+        renderConfetti(ctx, officeState.celebrations.bursts, offsetX, offsetY, zoom); // phase B
 
         // Store delete/rotate button bounds for hit-testing
         deleteButtonBoundsRef.current = editorRender?.deleteButtonBounds ?? null;
