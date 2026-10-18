@@ -6,10 +6,11 @@
  */
 
 import { CHARACTER_SITTING_OFFSET_PX, CHARACTER_Z_SORT_OFFSET } from '../constants.js';
+import { metricsOf } from '../office/agentLook.js';
 import { getCharacterSprite } from '../office/engine/characters.js';
 import { getCatalogEntry } from '../office/layout/furnitureCatalog.js';
+import { characterSpritesFor } from '../office/sprites/agentSprites.js';
 import { getCachedSprite } from '../office/sprites/spriteCache.js';
-import { getCharacterSprites } from '../office/sprites/spriteData.js';
 import type { Character, SpriteData } from '../office/types.js';
 import { CharacterState, Direction, TILE_SIZE } from '../office/types.js';
 import { isE2E } from '../runtime.js';
@@ -108,7 +109,9 @@ function crowns(fun: FunDirector, ox: number, oy: number, zoom: number, out: Fun
   const cached = getCachedSprite(sprite, zoom);
   for (const ch of fun.characters()) {
     if (!ch.isTeamLead || ch.matrixEffect) continue;
-    const frame = getCharacterSprite(ch, getCharacterSprites(ch.palette, ch.hueShift));
+    // The frame the renderer draws (a lead Clawd wears no accessory, so the
+    // crown sits on its body's top row the way it sits on a chibi's hair).
+    const frame = getCharacterSprite(ch, characterSpritesFor(ch));
     const frameW = frame[0]?.length ?? CHARACTER_FRAME_W;
     const frameH = frame.length || CHARACTER_FRAME_H;
     const sit = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
@@ -297,10 +300,13 @@ function windows(fun: FunDirector, ox: number, oy: number, zoom: number, out: Fu
 
 // ── Ping-pong ──────────────────────────────────────────────────
 
-/** The hand a player holds its paddle in, as a world-px point. */
+/** The hand a player holds its paddle in, as a world-px point (per look: a
+ *  Clawd's hand is lower and a px further out than a chibi's). */
 function handOf(ch: Character): { x: number; y: number } {
-  const side = ch.dir === Direction.RIGHT ? 4 : ch.dir === Direction.LEFT ? -4 : 0;
-  return { x: ch.x + side, y: ch.y - 9 };
+  const m = metricsOf(ch);
+  const side =
+    ch.dir === Direction.RIGHT ? m.reachSide : ch.dir === Direction.LEFT ? -m.reachSide : 0;
+  return { x: ch.x + side, y: ch.y - m.handRise };
 }
 
 function pingPong(

@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
 
+import { useAgentLook } from '../hooks/useAgentLook.js';
 import { isSoundEnabled, setSoundEnabled } from '../notificationSound.js';
+import { setAgentLook } from '../office/agentLook.js';
 import { isBrowserRuntime } from '../runtime.js';
 import { transport } from '../transport/index.js';
 import { Button } from './ui/Button.js';
@@ -71,6 +73,9 @@ export function SettingsModal({
   const [soundLocal, setSoundLocal] = useState(isSoundEnabled);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [assetDirDraft, setAssetDirDraft] = useState('');
+  // Agent look (Clawd / Classic): a view preference kept per browser, not a
+  // server setting, so a read-only wall display can flip it too.
+  const agentLook = useAgentLook();
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Settings">
@@ -204,6 +209,33 @@ export function SettingsModal({
         checked={alwaysShowOverlay}
         onChange={onToggleAlwaysShowOverlay}
       />
+      {/* Agents as Clawds (Claude Code's mascot, tinted per repo) or the classic
+          chibis. NPCs — Ansh, the Manager, the receptionist — stay chibis. */}
+      <div className="flex items-center justify-between py-6 px-10 gap-8">
+        <span>Agent Look</span>
+        <span className="flex gap-4" role="radiogroup" aria-label="Agent look">
+          <Button
+            variant={agentLook === 'clawd' ? 'active' : 'default'}
+            size="sm"
+            role="radio"
+            aria-checked={agentLook === 'clawd'}
+            onClick={() => setAgentLook('clawd')}
+            data-testid="agent-look-clawd"
+          >
+            Clawd
+          </Button>
+          <Button
+            variant={agentLook === 'classic' ? 'active' : 'default'}
+            size="sm"
+            role="radio"
+            aria-checked={agentLook === 'classic'}
+            onClick={() => setAgentLook('classic')}
+            data-testid="agent-look-classic"
+          >
+            Classic
+          </Button>
+        </span>
+      </div>
       {/* Headless agents are the office's only terminal-less citizens in VS Code.
           Standalone has no terminals at all, so nothing there would ever ghost. */}
       {!isBrowserRuntime && (

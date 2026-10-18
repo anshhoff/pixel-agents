@@ -9,9 +9,6 @@
  */
 
 import {
-  CIGARETTE_HAND_RISE_PX,
-  CIGARETTE_REACH_FRONT_PX,
-  CIGARETTE_REACH_SIDE_PX,
   COFFEE_CUP_CARRY_SEC,
   COFFEE_CUP_COFFEE_COLOR,
   COFFEE_CUP_COLOR,
@@ -23,6 +20,8 @@ import {
   COFFEE_RUN_STAND_MIN_SEC,
   COFFEE_RUN_STAND_RANGE_SEC,
 } from '../../constants.js';
+import type { LookMetrics } from '../agentLook.js';
+import { lookMetrics } from '../agentLook.js';
 import { Direction } from '../types.js';
 import type { FootprintOf, ZonePlace } from '../zones.js';
 import { spotKey, ZoneLabel } from '../zones.js';
@@ -226,12 +225,16 @@ export function cafeCounterSpots(input: CounterInput): ZonePlace[] {
 // ── The cup ───────────────────────────────────────────────────
 
 /** The cup's px at the hand, from the feet anchor (px cover [dx, dx+1)):
- *  2 wide, 3 tall, the coffee showing on top. Mirrors the cigarette's hand. */
-export function cupPixels(dir: Direction): Array<{ dx: number; dy: number; color: string }> {
+ *  2 wide, 3 tall, the coffee showing on top. Mirrors the cigarette's hand —
+ *  the chibi's by default, a Clawd's when the renderer passes its metrics. */
+export function cupPixels(
+  dir: Direction,
+  hand: Pick<LookMetrics, 'handRise' | 'reachFront' | 'reachSide'> = lookMetrics('classic'),
+): Array<{ dx: number; dy: number; color: string }> {
   const side = dir === Direction.LEFT || dir === Direction.RIGHT;
-  const reach = side ? CIGARETTE_REACH_SIDE_PX : CIGARETTE_REACH_FRONT_PX - 1;
+  const reach = side ? hand.reachSide : hand.reachFront - 1;
   const left = dir === Direction.LEFT ? -reach - 2 : reach;
-  const top = -CIGARETTE_HAND_RISE_PX - 1;
+  const top = -hand.handRise - 1;
   const out: Array<{ dx: number; dy: number; color: string }> = [];
   for (let y = 0; y < 3; y++) {
     for (let x = 0; x < 2; x++) {

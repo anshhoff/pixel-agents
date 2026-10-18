@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 
 import { toMajorMinor } from './changelogData.js';
 import { AgentCardBar } from './components/AgentCardBar.js';
+import { AgentLookToggle } from './components/AgentLookToggle.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
@@ -797,8 +798,10 @@ function App() {
       )}
 
       {officeReadOnly && (
-        <div className="absolute mobile-safe-top left-1/2 -translate-x-1/2 z-10 text-sm text-text-muted pointer-events-none select-none whitespace-nowrap">
+        <div className="absolute mobile-safe-top left-1/2 -translate-x-1/2 z-10 flex items-center gap-8 text-sm text-text-muted pointer-events-none select-none whitespace-nowrap">
           View only
+          {/* The agents' look is a per-browser view preference, so it stays switchable here. */}
+          <AgentLookToggle />
         </div>
       )}
 

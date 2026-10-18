@@ -5,7 +5,6 @@ import {
   AUTO_ON_FACING_DEPTH,
   AUTO_ON_SIDE_DEPTH,
   CHARACTER_HIT_HALF_WIDTH,
-  CHARACTER_HIT_HEIGHT,
   CHARACTER_SITTING_OFFSET_PX,
   CIGARETTE_Z_SORT_OFFSET,
   COFFEE_RNG_SEED,
@@ -25,6 +24,7 @@ import {
   ZONE_RETRY_INTERVAL_SEC,
 } from '../../constants.js';
 import { FunDirector } from '../../fun/funDirector.js';
+import { metricsOf } from '../agentLook.js';
 import { findNpcPlaces } from '../anshOffice.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
@@ -2213,13 +2213,13 @@ export class OfficeState {
     for (const ch of chars) {
       // Skip characters that are despawning (or walking out to)
       if (ch.matrixEffect === 'despawn' || ch.leaving) continue;
-      // Character sprite is 16x24, anchored bottom-center
-      // Apply sitting offset to match visual position
+      // The sprite is anchored bottom-center; the box is as tall as its look
+      // (a Clawd is half a chibi). Apply sitting offset to match visual position.
       const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
       const anchorY = ch.y + sittingOffset;
       const left = ch.x - CHARACTER_HIT_HALF_WIDTH;
       const right = ch.x + CHARACTER_HIT_HALF_WIDTH;
-      const top = anchorY - CHARACTER_HIT_HEIGHT;
+      const top = anchorY - metricsOf(ch).hitHeight;
       const bottom = anchorY;
       if (worldX >= left && worldX <= right && worldY >= top && worldY <= bottom) {
         return ch.id;

@@ -52,8 +52,10 @@ import {
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
 import { funSceneDrawables, renderFunOverlay } from '../../fun/funRender.js';
+import { metricsOf, noteLookSubjects } from '../agentLook.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { mapOffset } from '../projection.js';
+import { characterSpritesFor } from '../sprites/agentSprites.js';
 import {
   getCarpetJunctionSprite,
   getCarpetPaletteKey,
@@ -61,7 +63,7 @@ import {
 } from '../sprites/carpetTiles.js';
 import { getPetSprites } from '../sprites/petSpriteData.js';
 import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js';
-import { BUBBLE_HEART_SPRITE, getCharacterSprites } from '../sprites/spriteData.js';
+import { BUBBLE_HEART_SPRITE } from '../sprites/spriteData.js';
 import type {
   AreaDefinition,
   CarpetTile,
@@ -401,9 +403,18 @@ export function renderScene(
     }
   }
 
-  // Characters
+  // Characters: agents as Clawds (tinted per repo, with their accessory,
+  // blinking on the clock) or chibis per the Agent Look setting; NPCs always
+  // chibis. A sub-agent borrows its parent's tint, so parents are looked up.
+  const nowSec = performance.now() / 1000;
+  // The Clawds on the board get distinct tints and accessories (sticky per repo).
+  noteLookSubjects(characters);
+  const byId = new Map<number, Character>();
+  for (const ch of characters) byId.set(ch.id, ch);
   for (const ch of characters) {
-    const sprites = getCharacterSprites(ch.palette, ch.hueShift);
+    const parent =
+      ch.isSubagent && ch.parentAgentId !== null ? byId.get(ch.parentAgentId) : undefined;
+    const sprites = characterSpritesFor(ch, parent, nowSec, ch.dir);
     const spriteData = getCharacterSprite(ch, sprites);
     const cached = getCachedSprite(spriteData, zoom);
     // Sitting offset: shift character down when seated so they visually sit in the chair
@@ -580,7 +591,9 @@ function renderSmoking(
       );
     }
   };
-  const { paper, tip } = cigarettePixels(ch.dir);
+  // At the hand and mouth of this look (a Clawd's are lower than a chibi's).
+  const look = metricsOf(ch);
+  const { paper, tip } = cigarettePixels(ch.dir, look);
   ctx.save();
   if (frame.spark === 0) {
     px(tip.dx, tip.dy - 1, LIGHTER_SPARK_COLOR); // the flick: a spark...
@@ -599,7 +612,7 @@ function renderSmoking(
   }
   if (frame.ash) px(tip.dx + frame.ash.dx, tip.dy + frame.ash.dy, CIGARETTE_ASH_COLOR);
   puffs(frame.wisps, tip.dx, tip.dy - 1);
-  const mouth = mouthOffset(ch.dir);
+  const mouth = mouthOffset(ch.dir, look);
   puffs(frame.exhale, mouth.dx, mouth.dy);
   ctx.restore();
 }
