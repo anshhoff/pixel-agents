@@ -14,6 +14,7 @@ import { MigrationNotice } from './components/MigrationNotice.js';
 import type { RemoteWorkerInputs } from './components/RemoteWorkers.js';
 import { RemoteWorkersChip, RemoteWorkersPanel } from './components/RemoteWorkers.js';
 import { SettingsModal } from './components/SettingsModal.js';
+import { TasksBoard, TasksButton } from './components/TasksBoard.js';
 import { TerminalDrawer } from './components/TerminalDrawer.js';
 import { Tooltip } from './components/Tooltip.js';
 import { Button } from './components/ui/Button.js';
@@ -39,6 +40,7 @@ import { useKeyboardViewport } from './hooks/useKeyboardViewport.js';
 import { useTerminalDrawer } from './hooks/useTerminalDrawer.js';
 import { MobileShell } from './mobile/MobileShell.js';
 import { useMobileShell } from './mobile/useMobileShell.js';
+import { NpcOverlay } from './office/components/NpcOverlay.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
@@ -669,6 +671,14 @@ function App() {
             compactLabels={isMobile}
           />
 
+          {/* Phase M NPCs (Ansh, the Manager): a name label on hover. */}
+          <NpcOverlay
+            officeState={officeState}
+            containerRef={containerRef}
+            zoom={editor.zoom}
+            panRef={editor.panRef}
+          />
+
           {/* Done-today strip. Hidden while editing: the editor toolbar takes
               the slot above the BottomToolbar that the strip uses. */}
           {!editor.isEditMode && (
@@ -676,6 +686,7 @@ function App() {
               stats={dailyStats}
               compact={isMobile}
               aboveToolbar={!isMobile && !officeReadOnly}
+              action={<TasksButton compact={isMobile} />}
             />
           )}
 
@@ -928,6 +939,9 @@ function App() {
         onDelete={directoryEditor.remove}
         onClose={directoryEditor.close}
       />
+
+      {/* The Manager's Tasks board: a viewport overlay, so top level (see above). */}
+      <TasksBoard fullScreen={isMobile} canWriteReport={!officeReadOnly} />
 
       <ChangelogModal
         isOpen={isChangelogOpen}

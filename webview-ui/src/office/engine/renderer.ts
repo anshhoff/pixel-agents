@@ -75,6 +75,7 @@ import { CharacterState, Direction, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
 import { getCharacterSprite } from './characters.js';
 import { renderMatrixEffect } from './matrixEffect.js';
+import { knockBobPx } from './npcs.js';
 import { getPetSpriteData } from './petEntity.js';
 import type { SmokePuff } from './zoneEffects.js';
 import { cigarettePixels, isSmoking, mouthOffset, smokeFrame } from './zoneEffects.js';
@@ -400,7 +401,9 @@ export function renderScene(
     const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
     // Anchor at bottom-center of character — round to integer device pixels
     const drawX = Math.round(offsetX + ch.x * zoom - cached.width / 2);
-    const drawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - cached.height);
+    // Phase M: one knocking on Ansh's door bobs up now and then.
+    const knock = knockBobPx(ch);
+    const drawY = Math.round(offsetY + (ch.y + sittingOffset - knock) * zoom - cached.height);
 
     // Sort characters by bottom of their tile (not center) so they render
     // in front of same-row furniture (e.g. chairs) but behind furniture

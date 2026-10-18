@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import type { DailyPr, DailyStats } from '../../../core/src/messages.js';
 import {
   countLabel,
@@ -15,6 +17,8 @@ interface DailyStripProps {
   /** Desktop with the BottomToolbar showing: sit above it, in the slot the
    *  layout editor's toolbar uses (the strip hides while editing). */
   aboveToolbar: boolean;
+  /** Leading control (the "📋 Tasks" button); shown even before the first stats. */
+  action?: ReactNode;
 }
 
 /** One PR trophy: title + repo, a new-tab link when the PR has a usable url. */
@@ -59,8 +63,14 @@ function PrTrophy({ pr, compact }: { pr: DailyPr; compact: boolean }) {
  * only the newest trophy. Overlays the office region (never the terminal), so
  * on phones it slides away with the office page and sits above the card bar.
  */
-export function DailyStrip({ stats, compact, aboveToolbar }: DailyStripProps) {
-  if (!stats) return null;
+export function DailyStrip({ stats, compact, aboveToolbar, action }: DailyStripProps) {
+  if (!stats) {
+    if (!action) return null;
+    const place = compact
+      ? 'left-8 bottom-8'
+      : `left-10 ${aboveToolbar ? 'bottom-76' : 'bottom-10'}`;
+    return <div className={`absolute ${place} z-20 flex text-sm`}>{action}</div>;
+  }
 
   const prs = newestPrs(stats.prs);
   const pushes = totalPushes(stats.pushes);
@@ -80,6 +90,7 @@ export function DailyStrip({ stats, compact, aboveToolbar }: DailyStripProps) {
         title={`Today: ${summary.join(', ')}`}
         data-testid="daily-strip"
       >
+        {action}
         <span className="shrink-0">🏆{prs.length}</span>
         <span className="shrink-0">📦{pushes}</span>
         <span className="shrink-0">✏️{stats.filesEdited}</span>
@@ -99,6 +110,7 @@ export function DailyStrip({ stats, compact, aboveToolbar }: DailyStripProps) {
       className={`absolute left-10 ${aboveToolbar ? 'bottom-76' : 'bottom-10'} z-20 pixel-panel flex items-center gap-12 py-4 px-10 text-sm whitespace-nowrap overflow-hidden max-w-[calc(100%-110px)] select-none`}
       data-testid="daily-strip"
     >
+      {action}
       <span className="shrink-0 text-text-muted">TODAY</span>
       <span className="shrink-0">🏆 {summary[0]}</span>
       <span className="shrink-0">📦 {summary[1]}</span>

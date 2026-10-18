@@ -8,9 +8,10 @@
  */
 
 import { ZONE_ASHTRAY_TYPE_PREFIX, ZONE_SERVER_RACK_TYPE_PREFIX } from '../constants.js';
+import { knockSpots } from './anshOffice.js';
 import { isWalkable } from './layout/tileMap.js';
 import type { Seat, TileType as TileTypeVal, ZoneTarget } from './types.js';
-import { Direction } from './types.js';
+import { Direction, TileType } from './types.js';
 
 /** The reserved Area labels. `Dev` is the desks' room: not routed to. */
 export const ZoneLabel = {
@@ -21,6 +22,10 @@ export const ZoneLabel = {
   MEETING: 'Meeting',
   SERVER: 'Server',
   CAFE: 'Cafe',
+  /** Ansh's private office (phase M): permission requests knock on its door. */
+  ANSH: 'Ansh',
+  /** The Manager's desk outside it: the Manager NPC's, never an agent's desk. */
+  MANAGER: 'Manager',
 } as const;
 export type ZoneLabel = (typeof ZoneLabel)[keyof typeof ZoneLabel];
 
@@ -32,6 +37,7 @@ const ROUTED_LABELS: readonly ZoneLabel[] = [
   ZoneLabel.MEETING,
   ZoneLabel.SERVER,
   ZoneLabel.CAFE,
+  ZoneLabel.ANSH,
 ];
 
 /** Area label → reserved zone label, matched case-insensitively ("lounge"). */
@@ -278,6 +284,19 @@ export function parseZones(input: ZoneLayoutInput): OfficeZones {
         break;
       case ZoneLabel.ENTRANCE:
         places = []; // the door, below
+        break;
+      case ZoneLabel.ANSH:
+        // Nobody walks in: a permission request knocks just outside the door.
+        places = knockSpots(
+          label,
+          tiles,
+          (c, r) => labelAt(c, r) === label,
+          walkable,
+          (c, r) => {
+            const t = tileMap[r]?.[c];
+            return t === undefined || t === TileType.WALL || t === TileType.VOID;
+          },
+        );
         break;
     }
     zones.set(label, { label, tiles, places });
