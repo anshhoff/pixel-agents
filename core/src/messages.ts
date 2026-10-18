@@ -55,7 +55,9 @@ export type ServerMessage =
   | TerminalAvailability
   | TerminalSessionOpened
   | TerminalSessionClosed
-  | AgentDiagnostics;
+  | AgentDiagnostics
+  | WeekStats
+  | Weather;
 
 export type ClientMessage =
   | WebviewReady
@@ -492,6 +494,28 @@ export interface AgentDiagnostics {
   type: 'agentDiagnostics';
   agents: Record<string, any>[];
 }
+
+export interface WeekStats {
+  type: 'weekStats';
+  days: WeekDay[];
+}
+
+export interface WeekDay {
+  date: string;
+  prs: number;
+  pushes: number;
+  activeMs: number;
+}
+
+export interface Weather {
+  type: 'weather';
+  condition: WeatherCondition;
+  isDay: boolean;
+  tempC: number;
+  city: string;
+}
+
+export type WeatherCondition = 'clear' | 'clouds' | 'rain' | 'snow' | 'fog' | 'storm';
 
 export interface WebviewReady {
   type: 'webviewReady';
