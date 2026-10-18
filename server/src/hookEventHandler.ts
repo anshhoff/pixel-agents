@@ -3,6 +3,7 @@ import * as path from 'path';
 import type { AgentEvent, HookProvider } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { SESSION_END_GRACE_MS } from './constants.js';
+import { getInboxTracker } from './inbox/inboxTracker.js';
 import type { ProgressTracker } from './progress/progressTracker.js';
 import { type RemoteSource, remoteSourceOf } from './remoteSource.js';
 import type { SessionRouter } from './sessionRouter.js';
@@ -395,7 +396,11 @@ export class HookEventHandler {
       case 'turnEnd':
         // Handles Stop AND Notification(idle_prompt) -- both normalize to turnEnd.
         // awaitingInput discriminates them: idle_prompt sets it (-> "Waiting for
-        // input"), Stop leaves it absent (-> "Done").
+        // input"), Stop leaves it absent (-> "Done"). StopFailure normalizes here
+        // too; one that stopped on a usage limit also pauses the agent.
+        if (normEvent.usageLimit && getInboxTracker()?.tracks(this.agents)) {
+          getInboxTracker()?.onUsageLimit(agentId, normEvent.usageLimit);
+        }
         return this.handleStop(agent, agentId, normEvent.awaitingInput === true);
       case 'subagentTurnEnd':
         // Handles TeammateIdle AND TaskCompleted -- both normalize here. The normalized

@@ -38,6 +38,8 @@ import { useIntroTour } from './hooks/useIntroTour.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
 import { useKeyboardViewport } from './hooks/useKeyboardViewport.js';
 import { useTerminalDrawer } from './hooks/useTerminalDrawer.js';
+import { InboxStripItems } from './inbox/InboxPanel.js';
+import { useInboxMessages } from './inbox/inboxStore.js';
 import { MobileShell } from './mobile/MobileShell.js';
 import { useMobileShell } from './mobile/useMobileShell.js';
 import { NpcOverlay } from './office/components/NpcOverlay.js';
@@ -142,6 +144,8 @@ function App() {
     terminalUnavailableReason,
     terminalAgentIds,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
+  // Needs-you inbox: agentLink / agentLimit (and the paused flag the office routes on).
+  useInboxMessages(getOfficeState);
 
   // Show migration notice once layout reset is detected
   const [migrationNoticeDismissed, setMigrationNoticeDismissed] = useState(false);
@@ -706,6 +710,18 @@ function App() {
               compact={isMobile}
               aboveToolbar={!isMobile && !officeReadOnly}
               action={<TasksButton compact={isMobile} />}
+              leading={
+                <InboxStripItems
+                  compact={isMobile}
+                  agentIds={agents}
+                  agentTools={agentTools}
+                  agentStatuses={agentStatuses}
+                  agentProgress={agentProgress}
+                  agentTitles={agentTitles}
+                  backgroundAgents={backgroundAgents}
+                  officeState={officeState}
+                />
+              }
             />
           )}
 

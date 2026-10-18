@@ -21,6 +21,8 @@ interface DailyStripProps {
   aboveToolbar: boolean;
   /** Leading control (the "📋 Tasks" button); shown even before the first stats. */
   action?: ReactNode;
+  /** Shown first on the strip: the inbox's 📥 button and paused count. */
+  leading?: ReactNode;
 }
 
 /** One PR trophy: title + repo, a new-tab link when the PR has a usable url. */
@@ -65,21 +67,31 @@ function PrTrophy({ pr, compact }: { pr: DailyPr; compact: boolean }) {
  * only the newest trophy. Overlays the office region (never the terminal), so
  * on phones it slides away with the office page and sits above the card bar.
  */
-export function DailyStrip({ stats, compact, aboveToolbar, action }: DailyStripProps) {
+export function DailyStrip({ stats, compact, aboveToolbar, action, leading }: DailyStripProps) {
   // Today's tokens and estimated spend (useful signals): "🔤 1.2M tok · ~$3.40 est."
   const { tokens } = useSignals();
   if (!stats) {
-    if (!action) return null;
+    if (!action && !leading) return null;
     const place = compact
       ? 'left-8 bottom-8'
       : `left-10 ${aboveToolbar ? 'bottom-76' : 'bottom-10'}`;
-    return <div className={`absolute ${place} z-20 flex text-sm`}>{action}</div>;
+    return (
+      <div className={`absolute ${place} z-20 flex items-center gap-8 text-sm`}>
+        {action}
+        {leading}
+      </div>
+    );
   }
   const tokenMeter = tokens && (
     <span className="shrink-0" title={tokenMeterTitle(tokens)} data-testid="token-meter">
       {tokenMeterText(tokens)}
     </span>
   );
+  const lead = leading ? (
+    <span className="shrink-0 flex items-center gap-8 pr-8 border-r-2 border-border">
+      {leading}
+    </span>
+  ) : null;
 
   const prs = newestPrs(stats.prs);
   const pushes = totalPushes(stats.pushes);
@@ -100,6 +112,7 @@ export function DailyStrip({ stats, compact, aboveToolbar, action }: DailyStripP
         data-testid="daily-strip"
       >
         {action}
+        {lead}
         <span className="shrink-0">🏆{prs.length}</span>
         <span className="shrink-0">📦{pushes}</span>
         <span className="shrink-0">✏️{stats.filesEdited}</span>
@@ -121,6 +134,7 @@ export function DailyStrip({ stats, compact, aboveToolbar, action }: DailyStripP
       data-testid="daily-strip"
     >
       {action}
+      {lead}
       <span className="shrink-0 text-text-muted">TODAY</span>
       <span className="shrink-0">🏆 {summary[0]}</span>
       <span className="shrink-0">📦 {summary[1]}</span>

@@ -40,6 +40,9 @@ import type {
   AgentSleepState,
   SubagentCharacter,
 } from '../../hooks/useExtensionMessages.js';
+import { AgentLinkAction } from '../../inbox/AgentLinkAction.js';
+import { pausedTag } from '../../inbox/inboxModel.js';
+import { useInboxState } from '../../inbox/inboxStore.js';
 import type { PipState, WaitLevel } from '../../progress/progressFormat.js';
 import {
   countLabel,
@@ -227,6 +230,8 @@ export function ToolOverlay({
   alwaysShowOverlay,
   compactLabels,
 }: ToolOverlayProps) {
+  // Needs-you inbox: usage-limit pauses and the Open-in-Claude / resume links.
+  const inbox = useInboxState();
   const [, setTick] = useState(0);
   // Wall clock of the latest frame. This loop already re-renders the overlay
   // every frame (positions follow the characters), so the waiting badge counts
@@ -371,7 +376,9 @@ export function ToolOverlay({
     // (the panel would cover the bubble) — a marker holds its place. When
     // always-show is off, the visibility check above already keeps the panel
     // hidden for idle agents.
-    const isDone = ch.bubbleType === 'waiting' && !ch.waitingAwaitingInput;
+    // (A turn that stopped on a usage limit keeps its label: the ⏸️ tag says why.)
+    const isDone =
+      ch.bubbleType === 'waiting' && !ch.waitingAwaitingInput && !(id > 0 && inbox.limits[id]);
     if (isDone && !isSelected && !isHovered) {
       entries.push({ id, bubble: bubbleNode, marker: marker(), label: null });
       continue;
@@ -451,6 +458,7 @@ export function ToolOverlay({
     const originFull = originLabel(origin);
     const hasExtraLines = !!(originText || teamRoleLabel);
     const helpers = isSub ? 0 : (helperCounts.get(id) ?? 0);
+    const limit = isSub ? undefined : inbox.limits[id];
 
     // Context gauge. Every agent gets one — lead, teammate, adopted,
     // headless — as soon as it has taken a turn. Sub-agents never do: they
@@ -463,8 +471,11 @@ export function ToolOverlay({
     // its color steps up at 5 and 15 minutes.
     const progress = isSub || asleep ? undefined : agentProgress[id];
     const trackProgress = progress && hasStageTrack(progress) ? progress : null;
+    // A usage-limit pause is not a wait on the user: no badge.
     const waitMs =
-      progress?.waitingSince !== undefined ? Math.max(0, now - progress.waitingSince) : null;
+      progress?.waitingSince !== undefined && !limit
+        ? Math.max(0, now - progress.waitingSince)
+        : null;
     // Useful signals: the alarm's "stuck?" and the loop detector's line.
     const signalLine =
       isSub || asleep
@@ -543,6 +554,13 @@ export function ToolOverlay({
                   {SMOKE_BREAK_TAG}
                 </span>
               )}
+              {/* Paused by a usage limit: not waiting on the user. */}
+              {limit && (
+                <span className="text-2xs text-text-muted" data-testid="paused-tag">
+                  {' '}
+                  {pausedTag(limit, now)}
+                </span>
+              )}
             </span>
             {!compact && originText && (
               <span
@@ -590,6 +608,7 @@ export function ToolOverlay({
               </span>
             )}
           </div>
+          {isSelected && !isSub && <AgentLinkAction link={inbox.links[id]} variant="icon" />}
           {isSelected && !isSub && (
             <Button
               variant="ghost"

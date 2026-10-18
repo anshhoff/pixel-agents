@@ -40,6 +40,12 @@ import {
 import type { HookEvent } from './hookEventHandler.js';
 import { HookEventHandler } from './hookEventHandler.js';
 import {
+  getInboxTracker,
+  InboxTracker,
+  type InboxTrackerOptions,
+  setInboxTracker,
+} from './inbox/inboxTracker.js';
+import {
   getLocalSessionWatcher,
   LocalSessionWatcher,
   type LocalSessionWatcherOptions,
@@ -99,6 +105,8 @@ export interface AgentRuntimeOptions {
    *  Default: ~/.pixel-agents/tokens and `gh` with a StateAdapter, in memory
    *  and no board without one. */
   signals?: SignalsHubOptions;
+  /** Clock and transcript reader for the inbox tracker (tests). */
+  inbox?: InboxTrackerOptions;
 }
 
 export class AgentRuntime {
@@ -142,6 +150,8 @@ export class AgentRuntime {
   /** The Manager's daily report (tasks/managerReports.ts). Scheduled only once
    *  started -- the standalone CLI does. */
   readonly reports: ManagerReports;
+  /** Needs-you inbox: Open-in-Claude links + usage-limit pauses (inbox/). */
+  readonly inbox: InboxTracker;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
 
@@ -185,6 +195,8 @@ export class AgentRuntime {
       ...manager,
       dataDir: managerDataDir,
     });
+    this.inbox = new InboxTracker(store, options.inbox);
+    setInboxTracker(this.inbox);
 
     // Wire module-level dependencies
     setDismissalTracker(this.dismissalTracker);
@@ -784,6 +796,8 @@ export class AgentRuntime {
     if (getProgressTracker() === this.progress) setProgressTracker(null);
     this.signals.dispose();
     if (getSignalsHub() === this.signals) setSignalsHub(null);
+    this.inbox.dispose();
+    if (getInboxTracker() === this.inbox) setInboxTracker(null);
 
     if (this.projectScanTimer.current) {
       clearInterval(this.projectScanTimer.current);

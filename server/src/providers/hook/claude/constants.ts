@@ -18,6 +18,8 @@ export const LEGACY_HOOK_SCRIPT_NAME = 'pixel-agents-hook.js';
  *  local server, so an event we do not act on is scope we should not ask for.
  *  SessionStart/SessionEnd handle session lifecycle (start, /clear, resume, exit).
  *  Stop/PermissionRequest/Notification handle turn completion and permission UI.
+ *  StopFailure ends a turn that stopped on an API error -- it is how a usage
+ *  limit pausing the session is seen (inbox/usageLimit.ts).
  *  SubagentStart/SubagentStop/TeammateIdle/TaskCompleted power Agent Teams.
  *
  *  Deliberately NOT installed: UserPromptSubmit and TaskCreated. Both normalize
@@ -38,6 +40,7 @@ export const CLAUDE_HOOK_EVENTS = [
   'SubagentStop',
   'TeammateIdle',
   'TaskCompleted',
+  'StopFailure',
 ] as const;
 
 /** Suffix of the one-time pre-modification backup of settings.json. Brand-named

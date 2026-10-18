@@ -55,6 +55,8 @@ export interface DestinationSignals {
   active: boolean;
   /** agentStatus waiting: the turn ended, it waits on the user. */
   waiting: boolean;
+  /** Paused by a usage limit (agentLimit): not waiting on the user. */
+  paused?: boolean;
 }
 
 /** What the layout offers beyond the signals. */
@@ -69,6 +71,9 @@ export function pickDestination(
   s: DestinationSignals,
   options: DestinationOptions = {},
 ): Destination {
+  // A usage-limit pause is nobody's to answer: it waits at its desk -- not on
+  // the smoking terrace, and not dozing in the Lounge -- until the reset.
+  if (s.paused && !s.active && !s.permission && !s.askingUser) return Destination.DESK;
   if (s.sleeping) return Destination.LOUNGE;
   // A question is asked in the Meeting room, even with a permission pending.
   if (s.askingUser) return Destination.MEETING;

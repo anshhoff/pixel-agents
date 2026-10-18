@@ -10,6 +10,10 @@ import {
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
 } from '../../../constants.js';
 import {
+  usageLimitFromNotification,
+  usageLimitFromStopFailure,
+} from '../../../inbox/usageLimit.js';
+import {
   areHooksInstalled as installerAreHooksInstalled,
   installHooks as installerInstallHooks,
   uninstallHooks as installerUninstallHooks,
@@ -207,6 +211,16 @@ function normalizeHookEvent(
     case 'Stop':
       return { sessionId, event: { kind: 'turnEnd' } };
 
+    case 'StopFailure': {
+      // Fires INSTEAD of Stop when the turn ends on an API error. The turn is
+      // over either way; a usage limit additionally pauses the agent.
+      const usageLimit = usageLimitFromStopFailure(raw, Date.now());
+      return {
+        sessionId,
+        event: usageLimit ? { kind: 'turnEnd', usageLimit } : { kind: 'turnEnd' },
+      };
+    }
+
     case 'UserPromptSubmit':
       // No normalized kind for user prompts yet; silently ignore. No longer
       // installed (it forwarded the prompt text here only to be dropped), but a
@@ -248,6 +262,11 @@ function normalizeHookEvent(
         // idle_prompt = Claude went idle waiting on the user, not just a finished
         // turn. awaitingInput drives the "Waiting for input" label (vs "Done" for Stop).
         return { sessionId, event: { kind: 'turnEnd', awaitingInput: true } };
+      }
+      // A notification announcing a usage limit: the session stopped on it.
+      const usageLimit = usageLimitFromNotification(raw.message, Date.now());
+      if (usageLimit) {
+        return { sessionId, event: { kind: 'turnEnd', awaitingInput: true, usageLimit } };
       }
       return null;
     }
