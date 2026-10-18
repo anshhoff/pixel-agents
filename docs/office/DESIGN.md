@@ -182,3 +182,13 @@ Effects drawn by the renderer rather than shipped as furniture: smoke puffs, con
     - A "Time" tab in the Tasks board with a week table per repo: active hours, tasks, PRs, pushes, tokens, est. $. Day drill-down.
     - CSV export (week or month): one row per repo per day.
     - Read-only clients may view and export.
+- **H. Looks + TV mode** (approved 2026-10-18):
+  - **Clawd agents**:
+    - Agents (sessions and sub-agents) are drawn as Clawd, Claude Code's orange pixel mascot, instead of the chibi people.
+    - Each gets a colour tint and an accessory (cap, headset, beanie, bow, glasses, antenna), stable per repo.
+    - Ansh, the Manager and the receptionist stay human, so people and sessions read apart.
+    - A Settings toggle switches between Clawd (the default) and Classic.
+  - **TV mode**:
+    - Full screen with the controls hidden. The office, agent labels, TODAY strip and approval cards stay, and the 📥 count stays as a passive badge.
+    - Entered with a button, the T key or `?tv=1` (it works alongside `?token=`). Exit with Esc, T, or an Exit button that fades in when the mouse moves.
+    - The cursor hides when idle, the office auto-fits, and a wake lock is taken when the browser allows it.
