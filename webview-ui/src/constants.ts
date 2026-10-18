@@ -91,6 +91,12 @@ export const ZOOM_LEVEL_FADE_DELAY_MS = 1500;
 export const ZOOM_LEVEL_HIDE_DELAY_MS = 2000;
 export const ZOOM_LEVEL_FADE_DURATION_SEC = 0.5;
 export const ZOOM_SCROLL_THRESHOLD = 50;
+/** The zoom buttons and Ctrl+wheel move by about this ratio a step (a whole
+ *  +1 step was a 50% jump at 2x). */
+export const ZOOM_STEP_RATIO = 1.15;
+/** Zoom levels are multiples of this, so a 16 px tile stays a whole number of
+ *  device pixels (16 × 0.25 = 4) and the floor never shows seams. */
+export const ZOOM_QUANTUM = 0.25;
 export const PAN_MARGIN_FRACTION = 0.25;
 
 // ── Camera controls (office/camera.ts) ───────────────────────

@@ -19,6 +19,7 @@ import {
   pastDragThreshold,
   scalePan,
   stepKeyPan,
+  stepZoom,
 } from '../src/office/camera.js';
 import { TILE_SIZE, TileType } from '../src/office/types.js';
 
@@ -313,5 +314,37 @@ describe('pastDragThreshold', () => {
     expect(pastDragThreshold(3, 4, 5)).toBe(false); // exactly 5
     expect(pastDragThreshold(4, 4, 5)).toBe(true);
     expect(pastDragThreshold(-6, 0, 5)).toBe(true);
+  });
+});
+
+describe('stepZoom (the zoom buttons and Ctrl+wheel)', () => {
+  const up = (z: number) => stepZoom(z, 1, ZOOM_MIN, ZOOM_MAX);
+  const down = (z: number) => stepZoom(z, -1, ZOOM_MIN, ZOOM_MAX);
+
+  it('steps by about 15%, not a whole zoom level', () => {
+    expect(up(2)).toBe(2.25);
+    expect(up(2.25)).toBe(2.5);
+    expect(up(3)).toBe(3.5);
+    expect(down(2.25)).toBe(2);
+    expect(down(3)).toBe(2.5);
+  });
+
+  it('lands on quarter steps, so a 16 px tile stays whole device pixels', () => {
+    let z = ZOOM_MIN;
+    while (z < ZOOM_MAX) {
+      z = up(z);
+      expect(Number.isInteger(16 * z)).toBe(true);
+    }
+  });
+
+  it('always moves at least a quarter, and stops at the limits', () => {
+    expect(up(1)).toBe(1.25);
+    expect(down(1.25)).toBe(1);
+    expect(down(ZOOM_MIN)).toBe(ZOOM_MIN);
+    expect(up(ZOOM_MAX)).toBe(ZOOM_MAX);
+  });
+
+  it('snaps an odd starting zoom first', () => {
+    expect(up(2.1)).toBe(2.25);
   });
 });

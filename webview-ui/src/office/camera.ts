@@ -8,6 +8,7 @@
  * map in the canvas, +x moves the map right (see projection.mapOffset).
  */
 
+import { ZOOM_QUANTUM, ZOOM_STEP_RATIO } from '../constants.js';
 import { TILE_SIZE, TileType } from './types.js';
 
 export interface Margins {
@@ -220,4 +221,17 @@ export function keyPanImpulse(dir: PanDirection, stepPx: number): { x: number; y
 /** Whether a left-button press that has moved (dx, dy) CSS px is now a drag. */
 export function pastDragThreshold(dx: number, dy: number, threshold: number): boolean {
   return Math.hypot(dx, dy) > threshold;
+}
+
+/**
+ * The zoom one step in (`dir` 1) or out (-1) from `zoom`: about
+ * ZOOM_STEP_RATIO, snapped to a multiple of ZOOM_QUANTUM and always at least
+ * one quantum, clamped to [min, max].
+ */
+export function stepZoom(zoom: number, dir: 1 | -1, min: number, max: number): number {
+  const snap = (z: number) => Math.round(z / ZOOM_QUANTUM) * ZOOM_QUANTUM;
+  const from = snap(zoom);
+  let to = snap(dir > 0 ? from * ZOOM_STEP_RATIO : from / ZOOM_STEP_RATIO);
+  if (to === from) to = from + dir * ZOOM_QUANTUM;
+  return Math.max(min, Math.min(max, to));
 }

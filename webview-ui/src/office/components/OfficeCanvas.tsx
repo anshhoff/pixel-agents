@@ -14,7 +14,7 @@ import { unlockAudio } from '../../notificationSound.js';
 import { furnitureWithSignals } from '../../signals/officeSignals.js';
 import { openTasksBoard } from '../../tasks/tasksStore.js';
 import { transport } from '../../transport/index.js';
-import { pastDragThreshold } from '../camera.js';
+import { pastDragThreshold, stepZoom } from '../camera.js';
 import { furnitureAt } from '../editor/editorActions.js';
 import { buildEditorRenderState } from '../editor/editorRenderState.js';
 import type { EditorState } from '../editor/editorState.js';
@@ -880,7 +880,7 @@ export function OfficeCanvas({
         if (Math.abs(zoomAccumulatorRef.current) >= ZOOM_SCROLL_THRESHOLD) {
           const delta = zoomAccumulatorRef.current < 0 ? 1 : -1;
           zoomAccumulatorRef.current = 0;
-          const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom + delta));
+          const newZoom = stepZoom(zoom, delta, ZOOM_MIN, ZOOM_MAX);
           if (newZoom !== zoom) {
             onZoomChange(newZoom);
           }
