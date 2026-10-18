@@ -22,7 +22,8 @@ export const SEAT_REST_MAX_SEC = 240.0;
 export const MATRIX_EFFECT_DURATION_SEC = 0.3;
 export const MATRIX_TRAIL_LENGTH = 6;
 export const MATRIX_SPRITE_COLS = 16;
-export const MATRIX_SPRITE_ROWS = 24;
+/** The whole 16×32 frame: a Clawd lives in its lower half (rows 16-31). */
+export const MATRIX_SPRITE_ROWS = 32;
 export const MATRIX_FLICKER_FPS = 30;
 export const MATRIX_FLICKER_VISIBILITY_THRESHOLD = 180;
 export const MATRIX_COLUMN_STAGGER_RANGE = 0.3;
@@ -614,6 +615,70 @@ export const CONTEXT_GAUGE_BG = '#222';
 // ── Agent Teams ─────────────────────────────────────────────
 export const TEAM_LEAD_COLOR = '#ffd700';
 export const TEAM_ROLE_COLOR = '#66aaff';
+
+// ── Agent look: Clawd (office/agentLook.ts, office/sprites/clawdSprites.ts) ──
+// Agents (sessions, sub-agents, teammates) are drawn as Clawds — Claude Code's
+// orange mascot — unless the view setting says Classic. NPCs (Ansh, the
+// Manager, the receptionist, the greeter) keep the chibi art either way.
+/** The setting is a view preference, per browser: localStorage, never the server. */
+export const AGENT_LOOK_STORAGE_KEY = 'pixel-agents.agentLook';
+export const AGENT_LOOK_DEFAULT = 'clawd';
+/** The generated sheet's palette (scripts/generate-clawd-sprites.mjs). The eye
+ *  colour is unique in the sheet: the blink and the glasses find the eyes by it. */
+export const CLAWD_BODY_COLOR = '#D97757';
+export const CLAWD_EYE_COLOR = '#1B1210';
+/** Per-repo tints: HSL adjustments (adjustSprite) of the one orange sheet. A
+ *  repo prefers the tint a stable hash of its name picks; the Clawds on the
+ *  board are handed distinct ones, sticky per page (agentLook.ts). */
+export const CLAWD_TINTS: ReadonlyArray<{ name: string; h: number; s: number; b: number }> = [
+  { name: 'orange', h: 0, s: 0, b: 0 },
+  { name: 'gold', h: 28, s: 10, b: 8 },
+  { name: 'green', h: 105, s: -24, b: -6 },
+  { name: 'teal', h: 160, s: -10, b: -4 },
+  { name: 'sky', h: 195, s: -4, b: 2 },
+  { name: 'violet', h: 250, s: -6, b: 6 },
+  { name: 'pink', h: 318, s: -2, b: 6 },
+];
+/** The accessories' colours (their art is in clawdSprites.ts). */
+export const CLAWD_ACCESSORY_COLORS = {
+  outline: '#2A2024',
+  cap: '#3B6FD9',
+  capBrim: '#27489A',
+  headset: '#34343F',
+  headsetPad: '#6E6E80',
+  mic: '#C9C9D2',
+  beanie: '#C94C4C',
+  beanieBand: '#9E3838',
+  pompom: '#F4EEE4',
+  bow: '#E8558F',
+  bowKnot: '#B33068',
+  glasses: '#23232E',
+  antenna: '#3A3A44',
+  antennaBall: '#FFCF4A',
+} as const;
+/** A blink: the eyes close for CLAWD_BLINK_CLOSED_SEC once per period (jittered per agent). */
+export const CLAWD_BLINK_PERIOD_SEC = 4;
+export const CLAWD_BLINK_CLOSED_SEC = 0.14;
+/** Clawd geometry in sprite px from the feet anchor (the chibi values are the
+ *  CIGARETTE_*, SMOKE_MOUTH_*, TOOL_OVERLAY_*, BUBBLE_*, CHARACTER_HIT_* and
+ *  CONFETTI_ORIGIN_DY constants). A standing Clawd is 14 px tall (rows 17-30
+ *  of the frame) and 12 wide; seated it sits 2 px lower. */
+export const CLAWD_HEAD_RISE_PX = 15;
+export const CLAWD_HAND_RISE_PX = 8;
+export const CLAWD_REACH_FRONT_PX = 6;
+export const CLAWD_REACH_SIDE_PX = 5;
+export const CLAWD_MOUTH_RISE_PX = 9;
+export const CLAWD_MOUTH_SIDE_PX = 5;
+export const CLAWD_MOUTH_BACK_EXTRA_RISE_PX = 7;
+export const CLAWD_LABEL_RISE_PX = 24;
+/** A lead Clawd's crown stands this tall over its body: its label and bubble rise as much. */
+export const CLAWD_LEAD_LABEL_LIFT_PX = 6;
+export const CLAWD_BUBBLE_RISE_PX = 12;
+export const CLAWD_BUBBLE_SITTING_OFFSET_PX = 8;
+export const CLAWD_HIT_HEIGHT_PX = 18;
+export const CLAWD_CONFETTI_RISE_PX = 16;
+/** The mug shot crops the frame from this row for a Clawd (the body starts on row 16). */
+export const CLAWD_MUGSHOT_CROP_TOP_ROW = 12;
 
 // ── Pets ────────────────────────────────────────────────────────
 /** Walking speed in world pixels per second (matches character walk speed visually but slower). */
