@@ -27,6 +27,7 @@ import {
   useTasksState,
 } from '../tasks/tasksStore.js';
 import { transport } from '../transport/index.js';
+import { TimeReportView } from './TimeReportView.js';
 import { Button } from './ui/Button.js';
 
 /** Open tasks' durations tick on this clock while the board is open. */
@@ -42,6 +43,7 @@ const TABS: ReadonlyArray<{ tab: TasksTab; label: string }> = [
   { tab: 'board', label: 'Board' },
   { tab: 'history', label: 'History' },
   { tab: 'report', label: 'Report' },
+  { tab: 'time', label: 'Time' },
 ];
 
 /** The "📋 Tasks" opener beside the TODAY strip (icon only on phones). */
@@ -302,10 +304,11 @@ interface TasksBoardProps {
 /**
  * The Manager's Tasks board (docs/office/DESIGN.md, phase M): today's tasks
  * as a kanban (In progress / Waiting on you / Done), any past day's tasks,
- * and the daily report. Opened by clicking the Manager or the "📋 Tasks"
- * button; closed with ✕ or Esc. Live: the store follows tasksSnapshot,
- * taskUpdated, report and reportReady. Mount at App's top level (a viewport
- * overlay — never inside the mobile shell's transformed track).
+ * the daily report, and time per repo (phase G, TimeReportView.tsx). Opened
+ * by clicking the Manager or the "📋 Tasks" button; closed with ✕ or Esc.
+ * Live: the store follows tasksSnapshot, taskUpdated, report, reportReady and
+ * timeReport. Mount at App's top level (a viewport overlay — never inside the
+ * mobile shell's transformed track).
  */
 export function TasksBoard({ fullScreen, canWriteReport }: TasksBoardProps) {
   const s = useTasksState();
@@ -387,7 +390,7 @@ export function TasksBoard({ fullScreen, canWriteReport }: TasksBoardProps) {
         )}
       </div>
     );
-  } else {
+  } else if (s.tab === 'report') {
     content = (
       <div className="flex flex-col gap-10">
         <DatePicker date={s.date} max={today} />
@@ -399,6 +402,9 @@ export function TasksBoard({ fullScreen, canWriteReport }: TasksBoardProps) {
         />
       </div>
     );
+  } else {
+    // The view asks for its own range (and re-asks while today is in it).
+    content = <TimeReportView today={today} compact={fullScreen} />;
   }
 
   return (

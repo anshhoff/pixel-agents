@@ -11,18 +11,21 @@
 
 import { useSyncExternalStore } from 'react';
 
-import type { Report, Task } from '../../../core/src/messages.js';
+import type { Report, Task, TimeReport } from '../../../core/src/messages.js';
 import { localDateKey, upsertTask } from './taskBoard.js';
+import { rangeKey } from './timeReport.js';
 
-export type TasksTab = 'board' | 'history' | 'report';
+export type TasksTab = 'board' | 'history' | 'report' | 'time';
 
 export interface TasksState {
-  /** The server keeps a task log (a tasksSnapshot or report arrived). */
+  /** The server keeps a task log (a tasksSnapshot, report or timeReport arrived). */
   supported: boolean;
   tasksByDate: Record<string, Task[]>;
   reports: Record<string, Report>;
   /** reportReady count per date: the open Report tab re-requests on a bump. */
   reportReadyCount: Record<string, number>;
+  /** The Time tab's reports, by range (timeReport.ts rangeKey: 'from..to'). */
+  timeReports: Record<string, TimeReport>;
   open: boolean;
   tab: TasksTab;
   /** The History / Report tabs' day ('YYYY-MM-DD'). */
@@ -35,20 +38,28 @@ export function initialTasksState(now = Date.now()): TasksState {
     tasksByDate: {},
     reports: {},
     reportReadyCount: {},
+    timeReports: {},
     open: false,
     tab: 'board',
     date: localDateKey(now),
   };
 }
 
-/** The four task-log messages (others are ignored by the reducer). */
+/** The five task-log messages (others are ignored by the reducer). */
 export type TasksMessage =
   | { type: 'tasksSnapshot'; date: string; tasks: Task[] }
   | { type: 'taskUpdated'; task: Task }
   | { type: 'reportReady'; date: string }
-  | ({ type: 'report' } & Omit<Report, 'type'>);
+  | ({ type: 'report' } & Omit<Report, 'type'>)
+  | TimeReport;
 
-const TASK_MESSAGE_TYPES = new Set(['tasksSnapshot', 'taskUpdated', 'reportReady', 'report']);
+const TASK_MESSAGE_TYPES = new Set([
+  'tasksSnapshot',
+  'taskUpdated',
+  'reportReady',
+  'report',
+  'timeReport',
+]);
 
 export function isTasksMessage(msg: unknown): msg is TasksMessage {
   return (
@@ -97,6 +108,19 @@ export function reduceTasksMessage(state: TasksState, msg: TasksMessage, now: nu
         ...state,
         supported: true,
         reports: { ...state.reports, [msg.date]: msg as Report },
+      };
+    case 'timeReport':
+      return {
+        ...state,
+        supported: true,
+        timeReports: {
+          ...state.timeReports,
+          [rangeKey(msg)]: {
+            ...msg,
+            rows: Array.isArray(msg.rows) ? msg.rows : [],
+            unattributed: Array.isArray(msg.unattributed) ? msg.unattributed : [],
+          },
+        },
       };
   }
 }
