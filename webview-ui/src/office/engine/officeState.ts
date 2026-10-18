@@ -85,6 +85,8 @@ interface AgentZoneSignals {
   waitingSince?: number;
   /** The mid-work break scheduler (smokeBreaks.ts). */
   smokeBreak: SmokeBreakState;
+  /** Paused by a usage limit (agentLimit, inbox/inboxStore.ts). */
+  paused?: boolean;
 }
 
 /** Where the Entrance door's leaving target is keyed (shared, never reserved). */
@@ -1502,6 +1504,12 @@ export class OfficeState {
     signals.waitingSince = waitingSince;
   }
 
+  /** agentLimit: paused by a usage limit, it waits at its desk (not the Smoke spot). */
+  setAgentPaused(id: number, paused: boolean): void {
+    if (!paused && !this.agentZoneSignals.has(id)) return;
+    this.zoneSignalsFor(id).paused = paused;
+  }
+
   // ── Living office: the destination engine ──────────────────────
   // Per frame, for each top-level character: the rules pick a destination
   // (zoneRouting.pickDestination), hysteresis decides whether to switch to it
@@ -1573,6 +1581,7 @@ export class OfficeState {
       onBreak: onSmokeBreak(signals.smokeBreak, now),
       active: ch.isActive,
       waiting: !ch.isActive,
+      paused: signals.paused === true,
     };
   }
 
