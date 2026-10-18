@@ -16,6 +16,10 @@ cloud session ─── curl ────────┘   https://<host>/ingest
 Run the commands on this PC from the root of the pixel-agents checkout. You need Node.js 20 or later.
 Below, `<host>` is your Funnel name, `<machine>.<tailnet>.ts.net` (step 2 shows it).
 
+The host can be a Windows PC or a Mac. Sections 1 and 2 are written for Windows; on a Mac, follow
+[Mac host](#mac-host) for the steps that differ. Everywhere else, "this PC" means whichever machine hosts the board.
+It must stay awake: while it sleeps or is off, the board is down and events sent to it are lost.
+
 ## 1. This PC (board + relay + autostart)
 
 1. Build the board:
@@ -106,6 +110,79 @@ Below, `<host>` is your Funnel name, `<machine>.<tailnet>.ts.net` (step 2 shows 
    Funnel is switched on per port, so the board must never share port 443 with the Funnel:
    `status` must show Funnel on `:443` only, and `curl -i https://<host>:3443` from a device
    that is **not** on the tailnet must fail to connect.
+
+## Mac host
+
+Sections 1 and 2 work on a Mac with these changes. Run everything in Terminal from the checkout root.
+
+1. **Build and first start**: same as section 1, steps 1–4 (`npm ci`, `npm run build`, `node dist/cli.js --port 3100 --no-terminal`,
+   Settings, `add-source`). Moving from a Windows host? See [Moving the host](#moving-the-host-from-a-pc-to-a-mac) first.
+
+2. **Autostart** instead of section 1, step 5:
+
+   ```bash
+   bash remote/mac/autostart.sh            # install + start; re-run after npm run build or a Node upgrade
+   bash remote/mac/autostart.sh --status
+   bash remote/mac/autostart.sh --uninstall
+   ```
+
+   It installs two LaunchAgents, `com.pixel-agents.board` (:3100) and `com.pixel-agents.relay` (127.0.0.1:3199),
+   in `~/Library/LaunchAgents`. They start at login, restart 10 s after any exit, and log to `~/.pixel-agents/logs/`.
+   No sudo. The agents use the `node` and the `PATH` of the shell you install from (the board runs `claude`), so
+   install from a shell where `node` and `claude` work. `--print-plist board` shows what it would install.
+   If Tailscale is already set up, the board also accepts this Mac's Tailscale name, as on Windows; pass
+   `--allowed-host <name>` to choose it yourself.
+
+3. **Keep it awake.** With the default settings a Mac sleeps and the board goes down.
+
+   ```bash
+   sudo pmset -c sleep 0          # never sleep while on power (the display may still sleep)
+   sudo pmset -a autorestart 1    # Mac mini / iMac / Studio: start again after a power cut
+   pmset -g                       # check: sleep 0
+   ```
+
+   The same switches are in System Settings: **Energy** (desktop Macs) or **Battery → Options** (MacBooks),
+   "Prevent automatic sleeping … when the display is off". A MacBook still sleeps when its lid closes unless an
+   external display is attached; `sudo pmset -a disablesleep 1` keeps it awake with the lid shut (`0` undoes it;
+   it applies on battery too).
+
+4. **After a reboot**, LaunchAgents start only once you log in. For an unattended Mac, turn on
+   System Settings → Users & Groups → **Automatically log in as**. macOS doesn't offer it while FileVault is on;
+   then the board comes back when you next log in.
+
+5. **Tailscale** instead of section 2, step 1: install the macOS app from <https://tailscale.com/download/mac> and sign in.
+   If `tailscale` isn't a command in Terminal, use the app's binary:
+
+   ```bash
+   alias tailscale=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+   ```
+
+   Section 2, steps 2–5 (Funnel on `/ingest`, the `curl` check, the phone on `:3443`) are the same commands.
+   If `tailscale funnel` refuses on the App Store build, install the standalone build from the same page.
+   Run `autostart.sh` again after Tailscale is signed in, so the board picks up the Mac's Tailscale name.
+
+6. **Wall display**: open `http://127.0.0.1:3100` and press **Ctrl+Cmd+F** for full screen.
+
+### Moving the host from a PC to a Mac
+
+1. On the PC, stop serving: open the board's **Settings** and turn off **Instant Detection (Hooks)** (its local hook has
+   nowhere to post once the board is gone), then
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File remote\windows\autostart.ps1 -Uninstall
+   tailscale serve reset   # removes the PC's Funnel and Serve config
+   ```
+
+2. Copy the PC's `%USERPROFILE%\.pixel-agents\relay.json` to `~/.pixel-agents/relay.json` on the Mac **before** running
+   `add-source` there. It holds only the key hashes, so every existing key keeps working and no sender needs a new key.
+   (Or skip it and create fresh sources on the Mac.)
+3. Set up the Mac as above. Its Funnel name is new, so every sender needs the new URL:
+   - other computers: re-run `sender-config --url https://<mac-host>/ingest` and replace their hook entries;
+   - cloud repos: the committed `.claude/settings.json` hooks, and the network secret's **Allowed website**.
+4. The PC is now a sender like any other computer (section 3): add a `pc` source, save its key in
+   `%USERPROFILE%\.pixel-agents\ingest-key`, and merge `sender-config` into the PC's `~/.claude/settings.json`
+   (add `--shell powershell` if the PC has no Git Bash). Its sessions show as 💻, without a context gauge,
+   team detection, or board approvals; those need the transcript, which stays on the PC.
 
 ## 3. Another computer
 
@@ -214,7 +291,10 @@ Cloud sessions read only the repo's committed `.claude/settings.json`, not user 
 
 ## Troubleshooting
 
-- Check the tasks: `powershell -ExecutionPolicy Bypass -File remote\windows\autostart.ps1 -Status`. Logs are in `~/.pixel-agents/logs/`.
+- Check the tasks: `powershell -ExecutionPolicy Bypass -File remote\windows\autostart.ps1 -Status` (Mac: `bash remote/mac/autostart.sh --status`). Logs are in `~/.pixel-agents/logs/`.
+- Mac: the agents keep restarting and `board.log` shows nothing new: read `~/.pixel-agents/logs/board.launchd.log`
+  (the wrapper's own errors, such as a `node` that moved after an upgrade; re-run `autostart.sh` to fix the path).
+- Mac: `autostart.sh` stops with "port 3100 is in use": a board started by hand is still running. Stop it and re-run.
 - `curl` gets `401`: the key is wrong or missing.
 - `curl` gets `404`: wrong path, or not a `POST`.
 - The relay answers `204` but nothing shows: the board isn't running. Check `-Status` and the logs.
