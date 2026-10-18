@@ -50,6 +50,9 @@ import { migrateLayoutColors } from './office/layout/layoutSerializer.js';
 import { overlayProjection } from './office/projection.js';
 import { getPetCount } from './office/sprites/petSpriteData.js';
 import { EditTool, type OfficeLayout, TILE_SIZE } from './office/types.js';
+import { ApprovalCard } from './permissions/ApprovalCard.js';
+import { approvalAgentLabel } from './permissions/approvalState.js';
+import { usePermissionApprovals } from './permissions/usePermissionApprovals.js';
 import { isBrowserRuntime, isE2E } from './runtime.js';
 import { installTestHooks } from './testHooks.js';
 import { transport } from './transport/index.js';
@@ -138,6 +141,10 @@ function App() {
     terminalUnavailableReason,
     terminalAgentIds,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
+
+  // Permission requests local sessions are waiting on the board to answer.
+  const approvals = usePermissionApprovals();
+  const { agentIds: approvalAgentIds, open: openApproval } = approvals;
 
   // Show migration notice once layout reset is detected
   const [migrationNoticeDismissed, setMigrationNoticeDismissed] = useState(false);
@@ -415,6 +422,11 @@ function App() {
       // If clicked agent is a sub-agent, focus the parent's terminal instead
       const os = getOfficeState();
       const focusId = os.terminalOwnerOf(agentId);
+      // An agent waiting on an approval opens its card instead.
+      if (approvalAgentIds.has(focusId)) {
+        openApproval(focusId);
+        return;
+      }
       transport.send({ type: 'focusAgent', id: focusId });
       // Standalone: focusAgent is a no-op server-side (there's no editor to
       // raise a panel in), so focus is resolved here — reveal the agent's tab
@@ -429,7 +441,14 @@ function App() {
         if (isMobile) showMobileTerminal();
       }
     },
-    [terminalAgentIds, isMobile, revealTerminal, showMobileTerminal],
+    [
+      terminalAgentIds,
+      isMobile,
+      revealTerminal,
+      showMobileTerminal,
+      approvalAgentIds,
+      openApproval,
+    ],
   );
 
   // Card click when there is no terminal pane to switch (VS Code, or a
@@ -667,6 +686,8 @@ function App() {
             onCloseAgent={handleCloseAgent}
             alwaysShowOverlay={alwaysShowOverlay}
             compactLabels={isMobile}
+            approvalAgentIds={approvalAgentIds}
+            onApprovalClick={openApproval}
           />
 
           {/* Done-today strip. Hidden while editing: the editor toolbar takes
@@ -879,6 +900,22 @@ function App() {
           )}
         </>
       )}
+
+      {/* Approval card: top level, like the modals below (see there). */}
+      <ApprovalCard
+        card={approvals.card}
+        readOnly={officeReadOnly}
+        agentLabel={
+          approvals.card
+            ? approvalAgentLabel(
+                officeState.characters.get(approvals.card.request.agentId)?.directoryName,
+                agentTitles[approvals.card.request.agentId],
+              )
+            : ''
+        }
+        onAnswer={approvals.answer}
+        onClose={approvals.close}
+      />
 
       {/* Hooks info modal. Top level, beside the other modals: inside the
           office region it would sit in the mobile shell's transformed track,
