@@ -52,3 +52,20 @@ export function cwdFromTranscript(jsonlFile: string): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * The repo a working directory belongs to, by name: the directory's basename,
+ * except inside a git worktree kept in the repo itself --
+ * `<repo>/.claude/worktrees/<name>` (Claude Code's agent worktrees) or
+ * `<repo>/.worktrees/<name>`, at any depth below -- which counts as `<repo>`.
+ * Without this, every helper agent's labels, tasks and tokens land on its own
+ * "repo" named after the worktree (`agent-a02c…`, `phase-g`).
+ */
+export function repoNameForCwd(cwd: string): string {
+  const parts = cwd.split(/[\\/]+/).filter(Boolean);
+  for (let i = parts.length - 2; i >= 1; i--) {
+    if (parts[i] === 'worktrees' && parts[i - 1] === '.claude' && i >= 2) return parts[i - 2];
+    if (parts[i] === '.worktrees') return parts[i - 1];
+  }
+  return parts[parts.length - 1] ?? '';
+}

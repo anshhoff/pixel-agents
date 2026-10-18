@@ -31,6 +31,7 @@ import * as path from 'path';
 import * as readline from 'readline';
 
 import { repoOf } from '../tasks/taskLedger.js';
+import { repoNameForCwd } from '../transcriptCwd.js';
 import {
   TOKENS_BACKFILL_MAX_DEPTH,
   TOKENS_BACKFILL_SUFFIX,
@@ -212,7 +213,7 @@ export async function scanTranscript(
         continue;
       }
       if (typeof record?.cwd === 'string' && record.cwd) {
-        fileRepo ??= repoOf({ directoryName: path.basename(record.cwd) });
+        fileRepo ??= repoOf({ directoryName: repoNameForCwd(record.cwd) });
       }
       const usage = usageOf(record);
       if (!usage) continue;
@@ -222,7 +223,7 @@ export async function scanTranscript(
       if (!wanted.has(date)) continue;
       const repo =
         typeof record.cwd === 'string' && record.cwd
-          ? repoOf({ directoryName: path.basename(record.cwd) })
+          ? repoOf({ directoryName: repoNameForCwd(record.cwd) })
           : (fileRepo ?? repoOf({}));
       let day = found.get(date);
       if (!day) found.set(date, (day = new Map()));
