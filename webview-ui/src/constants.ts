@@ -924,3 +924,27 @@ export const NOTICE_BOARD_LINES = 5;
 export const NOTICE_BOARD_INK = '#2a1a0e';
 /** A pinned note's paper behind each line. */
 export const NOTICE_BOARD_PAPER = 'rgba(250, 244, 222, 0.85)';
+
+// ── Fun (phases E/F, see src/fun/): colours ──────────────────────
+export const FUN_CALENDAR_PR_COLOR = '#4caf50';
+export const FUN_CALENDAR_PR_STREAK_COLOR = '#2e7d32';
+export const FUN_CALENDAR_TODAY_COLOR = '#f0cc58';
+export const FUN_CALENDAR_TEXT_COLOR = '#fff1e8';
+export const FUN_WEATHER_RAIN_COLOR = '#9cc4e8';
+export const FUN_WEATHER_SNOW_COLOR = '#ffffff';
+export const FUN_WEATHER_CLOUD_COLOR = '#7d8790';
+export const FUN_WEATHER_FOG_COLOR = '#d6d7d8';
+export const FUN_WEATHER_FLASH_COLOR = '#fff8d0';
+export const FUN_RADIO_NOTE_COLORS: readonly string[] = [
+  '#f0cc58',
+  '#8fb6d6',
+  '#e58fb0',
+  '#9fd98f',
+];
+export const FUN_PING_PONG_BALL_COLOR = '#ffffff';
+export const FUN_PING_PONG_PADDLE_COLOR = '#c0392b';
+export const FUN_PING_PONG_HANDLE_COLOR = '#6b4a2b';
+export const FUN_DIM_PULSE_COLOR = '#000000';
+export const FUN_BANNER_BG = 'rgba(30, 30, 46, 0.9)';
+export const FUN_BANNER_BORDER_COLOR = '#f0cc58';
+export const FUN_BANNER_TEXT_COLOR = '#fff1e8';

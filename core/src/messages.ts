@@ -64,7 +64,9 @@ export type ServerMessage =
   | TerminalSessionClosed
   | AgentDiagnostics
   | PermissionPending
-  | PermissionResolved;
+  | PermissionResolved
+  | WeekStats
+  | Weather;
 
 export type ClientMessage =
   | WebviewReady
@@ -608,6 +610,28 @@ export interface PermissionResolved {
 }
 
 export type PermissionOutcome = 'allowed' | 'denied' | 'answeredInTerminal' | 'expired';
+
+export interface WeekStats {
+  type: 'weekStats';
+  days: WeekDay[];
+}
+
+export interface WeekDay {
+  date: string;
+  prs: number;
+  pushes: number;
+  activeMs: number;
+}
+
+export interface Weather {
+  type: 'weather';
+  condition: WeatherCondition;
+  isDay: boolean;
+  tempC: number;
+  city: string;
+}
+
+export type WeatherCondition = 'clear' | 'clouds' | 'rain' | 'snow' | 'fog' | 'storm';
 
 export interface WebviewReady {
   type: 'webviewReady';

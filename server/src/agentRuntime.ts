@@ -37,6 +37,7 @@ import {
   startFileWatching,
   startStaleExternalAgentCheck,
 } from './fileWatcher.js';
+import { FunServices, getFunServices, setFunServices } from './fun/funServices.js';
 import type { HookEvent } from './hookEventHandler.js';
 import { HookEventHandler } from './hookEventHandler.js';
 import {
@@ -152,6 +153,8 @@ export class AgentRuntime {
   readonly reports: ManagerReports;
   /** Needs-you inbox: Open-in-Claude links + usage-limit pauses (inbox/). */
   readonly inbox: InboxTracker;
+  /** Week wall totals + weather (see fun/funServices.ts). Weather polls only once started. */
+  readonly fun: FunServices;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
 
@@ -163,16 +166,19 @@ export class AgentRuntime {
     // Both surfaces set a StateAdapter before building the runtime. A bare store
     // (tests) persists nothing else either, so its daily totals stay in memory
     // rather than landing in whatever home directory the process has.
-    this.progress = new ProgressTracker(
-      store,
-      options.progress ?? (store.getAdapter() ? {} : { dailyDir: null }),
-    );
+    const progressOptions = options.progress ?? (store.getAdapter() ? {} : { dailyDir: null });
+    this.progress = new ProgressTracker(store, progressOptions);
     this.signals = new SignalsHub(
       store,
       this.progress,
       options.signals ?? (store.getAdapter() ? {} : { tokensDir: null, noticeBoard: null }),
     );
     setSignalsHub(this.signals);
+    this.fun = new FunServices(store, {
+      dailyDir: progressOptions.dailyDir,
+      now: progressOptions.now,
+    });
+    setFunServices(this.fun);
     this.localSessions = new LocalSessionWatcher(
       store,
       {
@@ -505,6 +511,11 @@ export class AgentRuntime {
     this.reports.start();
   }
 
+  /** Start polling the weather for the office windows (standalone only; needs the network). */
+  startWeather(): void {
+    this.fun.weather.start();
+  }
+
   // ── Agent removal (shared cleanup) ──
 
   /** Remove an agent: stop watchers, cancel timers, delete from store. */
@@ -798,6 +809,8 @@ export class AgentRuntime {
     if (getSignalsHub() === this.signals) setSignalsHub(null);
     this.inbox.dispose();
     if (getInboxTracker() === this.inbox) setInboxTracker(null);
+    this.fun.dispose();
+    if (getFunServices() === this.fun) setFunServices(null);
 
     if (this.projectScanTimer.current) {
       clearInterval(this.projectScanTimer.current);

@@ -51,6 +51,7 @@ import {
   VOID_TILE_DASH_PATTERN,
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
+import { funSceneDrawables, renderFunOverlay } from '../../fun/funRender.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { mapOffset } from '../projection.js';
 import {
@@ -528,6 +529,9 @@ export function renderScene(
       },
     });
   }
+
+  // Fun: crowns, the week wall, weather in the windows, ping-pong, radio notes.
+  drawables.push(...funSceneDrawables(offsetX, offsetY, zoom));
 
   // Sort by Y (lower = in front = drawn later)
   drawables.sort((a, b) => a.zY - b.zY);
@@ -1065,6 +1069,9 @@ export function renderFrame(
   if (pets && pets.length > 0) {
     renderPetBubbles(ctx, pets, offsetX, offsetY, zoom);
   }
+
+  // Fun: the 19:00 banner and its dim pulse.
+  renderFunOverlay(ctx, canvasWidth, canvasHeight, zoom);
 
   // Area labels (above bubbles + characters, below editor overlays)
   if (showAreas) {

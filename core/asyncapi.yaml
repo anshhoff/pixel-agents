@@ -150,6 +150,9 @@ components:
         # Permission approvals from the board
         - $ref: '#/components/schemas/PermissionPending'
         - $ref: '#/components/schemas/PermissionResolved'
+        # Fun (week wall, weather in the windows)
+        - $ref: '#/components/schemas/WeekStats'
+        - $ref: '#/components/schemas/Weather'
       discriminator: type
 
     ClientMessage:
@@ -721,6 +724,60 @@ components:
         writing:
           type: boolean
           description: True while a report for this date is being written.
+
+    WeekDay:
+      description: One local day's totals on the week wall.
+      type: object
+      additionalProperties: false
+      required: [date, prs, pushes, activeMs]
+      properties:
+        date:
+          type: string
+          description: Local date, YYYY-MM-DD.
+        prs:
+          type: integer
+        pushes:
+          type: integer
+        activeMs:
+          type: integer
+
+    WeekStats:
+      description: |
+        The last 7 local days (oldest first, today last) from the daily totals in
+        ~/.pixel-agents/daily/. Sent on connect and whenever today's totals change.
+      type: object
+      additionalProperties: false
+      required: [type, days]
+      properties:
+        type:
+          const: weekStats
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/WeekDay'
+
+    WeatherCondition:
+      type: string
+      enum: [clear, clouds, rain, snow, fog, storm]
+
+    Weather:
+      description: |
+        Current weather for the city guessed once from the PC's IP (cached), polled
+        from Open-Meteo every 30 min. Never sent when the network is unavailable.
+      type: object
+      additionalProperties: false
+      required: [type, condition, isDay, tempC, city]
+      properties:
+        type:
+          const: weather
+        condition:
+          $ref: '#/components/schemas/WeatherCondition'
+        isDay:
+          type: boolean
+        tempC:
+          type: number
+        city:
+          type: string
 
     AgentSleep:
       description: |

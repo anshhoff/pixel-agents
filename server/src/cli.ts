@@ -33,6 +33,7 @@ import {
   WILDCARD_HOSTNAMES,
 } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
+import { weatherEnabled } from './fun/funConstants.js';
 import { localSessionWatchEnabled } from './localSessions.js';
 import { createPermissionApprovals } from './permissions/index.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
@@ -428,6 +429,8 @@ async function main(): Promise<void> {
     // The Manager's 19:00 daily report (standalone only). PIXEL_AGENTS_MANAGER=off
     // keeps claude from ever being run for it.
     runtime.startManagerReports();
+    // Real weather in the office windows (city guessed once from the IP; offline = none).
+    if (weatherEnabled()) runtime.startWeather();
 
     // The URL the operator opens has to be REACHABLE (a wildcard bind address
     // is a bind target, not an address you can browse to — `--host 0.0.0.0`

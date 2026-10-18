@@ -24,6 +24,7 @@ import {
   WAITING_BUBBLE_DURATION_SEC,
   ZONE_RETRY_INTERVAL_SEC,
 } from '../../constants.js';
+import { FunDirector } from '../../fun/funDirector.js';
 import { findNpcPlaces } from '../anshOffice.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
@@ -203,6 +204,9 @@ export class OfficeState {
   receptionist: Character | null = null;
   /** Office-clock time she began waving (an agent walked in), or null. */
   private receptionistWaveAt: number | null = null;
+
+  /** Fun (phases E/F): rituals, pastimes, decorations, smart pets (fun/funDirector.ts). */
+  readonly fun: FunDirector = new FunDirector(this);
 
   /**
    * directoryName → list of Area labels that Directory belongs to.
@@ -1236,10 +1240,11 @@ export class OfficeState {
 
     // ...and its ashtray fills with butts while people wait on the user.
     // Phase B: a celebration bell rings on a desk; trophies stand on the shelves.
+    // Fun: festival decorations, pizza, growing plants, the fish tank, the printer...
     // Ambience (officeAmbience.ts): the windows show the time of day, the
     // clocks the time, and each occupied Dev desk its agent's name plate.
     const now = this.ambienceNow();
-    const placed = furnitureAt(this.placedWithTrophies(), now);
+    const placed = furnitureAt(this.fun.decorate(this.placedWithTrophies()), now);
     const butts = [
       ...this.ashtrayButtInstances(),
       ...this.celebrations.bellInstances(),
@@ -1721,6 +1726,15 @@ export class OfficeState {
   }
 
   private routeCharacter(ch: Character): void {
+    // Fun: a ritual or pastime (standup, whiteboard, ping-pong, ...) borrows it.
+    const borrowed = this.fun.targetFor(ch);
+    if (borrowed) {
+      if (this.stubbingOut(ch)) return;
+      this.destinationIntents.delete(ch.id); // routing starts afresh once it's let go
+      ch.smokeBreak = undefined;
+      this.setZoneTarget(ch, borrowed);
+      return;
+    }
     const signals = this.destinationSignals(ch);
     const anshDoor = (this.zones.zones.get(ZoneLabel.ANSH)?.places.length ?? 0) > 0;
     const intent = this.holdIntent(ch, pickDestination(signals, { anshDoor }));
@@ -1827,6 +1841,12 @@ export class OfficeState {
       }
       unreachable.add(place.key);
     }
+  }
+
+  /** Can the character walk to that place from where it stands? (Fun picks places with it.) */
+  canReach(ch: Character, target: { col: number; row: number; sit: boolean }): boolean {
+    if (ch.tileCol === target.col && ch.tileRow === target.row) return true;
+    return this.pathForTarget(ch, target).length > 0;
   }
 
   /** In use by someone else: a seat held as a desk or a destination, a reserved spot. */
@@ -2030,8 +2050,10 @@ export class OfficeState {
     const prevFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
     this.furnitureAnimTimer += dt;
     const newFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
-    // Phase B: a bell coming or going changes the furniture list too.
-    if (this.celebrations.update(dt) || newFrame !== prevFrame) {
+    // Phase B: a bell coming or going changes the furniture list too, and so
+    // can the fun director (decorations, the printer, the fish tank).
+    const funChanged = this.fun.update(dt);
+    if (this.celebrations.update(dt) || newFrame !== prevFrame || funChanged) {
       this.rebuildFurnitureInstances();
     }
     this.officeClock += dt;
@@ -2092,7 +2114,10 @@ export class OfficeState {
 
     // ── Pet FSM ────────────────────────────────────────────────
     for (const pet of this.pets) {
-      updatePet(pet, dt, this.walkableTiles, this.characters, this.tileMap, this.blockedTiles);
+      // Fun: the smart pets go where they're needed; otherwise their own FSM.
+      if (!this.fun.drivePet(pet, dt)) {
+        updatePet(pet, dt, this.walkableTiles, this.characters, this.tileMap, this.blockedTiles);
+      }
 
       // Tick heart bubble timer (mirrors character waiting-bubble pattern)
       if (pet.bubbleType) {

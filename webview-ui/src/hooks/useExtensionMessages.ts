@@ -347,6 +347,8 @@ export function useExtensionMessages(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handler = (msg: any) => {
       const os = getOfficeState();
+      // Fun (phases E/F) reads what it needs from every message itself.
+      os.fun.onMessage(msg);
       // CI / e2e diagnostic: record every received transport message on the
       // window-side log. The fixture reads window.__pixelAgentsTestHooks.
       // messageLog and attaches as JSON so CI failures can see the exact

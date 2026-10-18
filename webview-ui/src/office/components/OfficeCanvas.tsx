@@ -754,6 +754,9 @@ export function OfficeCanvas({
         return;
       }
 
+      // Fun: the Lounge radio toggles its lo-fi loop.
+      if (officeState.fun.handleTap(pos.worldX, pos.worldY)) return;
+
       // No agent hit — check seat click while agent is selected
       if (officeState.selectedAgentId !== null) {
         const selectedCh = officeState.characters.get(officeState.selectedAgentId);
