@@ -22,6 +22,8 @@ export const Destination = {
   IDLE: 'idle',
   LOUNGE: 'lounge',
   MEETING: 'meeting',
+  /** A permission request: knock on Ansh's door (phase M). */
+  KNOCK: 'knock',
   SERVER: 'server',
   /** Waiting on the user. */
   SMOKE: 'smoke',
@@ -55,10 +57,22 @@ export interface DestinationSignals {
   waiting: boolean;
 }
 
+/** What the layout offers beyond the signals. */
+export interface DestinationOptions {
+  /** The layout has an `Ansh` Area with somewhere to knock: permission
+   *  requests go to its door instead of the Meeting room. */
+  anshDoor?: boolean;
+}
+
 /** The rules table, first match wins. */
-export function pickDestination(s: DestinationSignals): Destination {
+export function pickDestination(
+  s: DestinationSignals,
+  options: DestinationOptions = {},
+): Destination {
   if (s.sleeping) return Destination.LOUNGE;
-  if (s.permission || s.askingUser) return Destination.MEETING;
+  // A question is asked in the Meeting room, even with a permission pending.
+  if (s.askingUser) return Destination.MEETING;
+  if (s.permission) return options.anshDoor ? Destination.KNOCK : Destination.MEETING;
   if (s.testing) return Destination.SERVER;
   if (s.active && (s.longCommand || s.onBreak)) return Destination.BREAK;
   if (s.active) return Destination.DESK;
@@ -101,9 +115,9 @@ export interface DestinationIntent {
 /**
  * Hysteresis: a destination is kept at least `holdSec` before switching, so a
  * burst of tools doesn't make a character pace back and forth. Going back to
- * its desk (work resumed) or to the Meeting room (someone needs the user) is
- * never held up. Returns `current` itself while it is kept, a new intent on a
- * switch (or the first one, when there is none yet).
+ * its desk (work resumed), to the Meeting room or to Ansh's door (someone
+ * needs the user) is never held up. Returns `current` itself while it is
+ * kept, a new intent on a switch (or the first one, when there is none yet).
  */
 export function holdDestination(
   current: DestinationIntent | undefined,
@@ -113,7 +127,11 @@ export function holdDestination(
 ): DestinationIntent {
   if (!current) return { kind: wanted, since: now };
   if (current.kind === wanted) return current;
-  if (wanted === Destination.DESK || wanted === Destination.MEETING) {
+  if (
+    wanted === Destination.DESK ||
+    wanted === Destination.MEETING ||
+    wanted === Destination.KNOCK
+  ) {
     return { kind: wanted, since: now };
   }
   if (now - current.since >= holdSec) return { kind: wanted, since: now };
@@ -129,6 +147,8 @@ export const DESTINATION_ZONES: Record<Destination, readonly ZoneLabel[]> = {
   [Destination.IDLE]: [],
   [Destination.LOUNGE]: [ZoneLabel.LOUNGE, ZoneLabel.CAFE],
   [Destination.MEETING]: [ZoneLabel.MEETING],
+  // Ansh's door; with every knock spot taken, the request waits in Meeting.
+  [Destination.KNOCK]: [ZoneLabel.ANSH, ZoneLabel.MEETING],
   [Destination.SERVER]: [ZoneLabel.SERVER],
   [Destination.SMOKE]: [ZoneLabel.SMOKE, ZoneLabel.CAFE],
   // A mid-work smoke never overflows: with the terrace full it stays at work.
@@ -162,8 +182,14 @@ export function choosePlace(
     if (!zone) continue;
     let best: ZonePlace | null = null;
     let bestDist = Infinity;
+    // Ansh's door is a queue: its knock spots are taken front rank first.
+    const inOrder = label === ZoneLabel.ANSH;
     for (const place of zone.places) {
       if (isTaken(place)) continue;
+      if (inOrder) {
+        best = place;
+        break;
+      }
       const d = Math.abs(place.col - from.col) + Math.abs(place.row - from.row);
       if (d < bestDist) {
         best = place;

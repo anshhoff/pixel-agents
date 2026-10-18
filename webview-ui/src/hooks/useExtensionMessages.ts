@@ -26,6 +26,7 @@ import {
 import type { OfficeLayout, ToolActivity } from '../office/types.js';
 import { setWallSprites } from '../office/wallTiles.js';
 import { isBrowserRuntime, isE2E } from '../runtime.js';
+import { handleTasksMessage } from '../tasks/tasksStore.js';
 import { transport } from '../transport/index.js';
 import type { AgentTitles, BackgroundAgentInfo, BackgroundAgents } from './agentKindState.js';
 import {
@@ -365,6 +366,10 @@ export function useExtensionMessages(
           parentToolId: msg.parentToolId,
         });
       }
+
+      // Phase M task log: the Tasks board's store; a report for today sends
+      // the Manager to Ansh's desk.
+      if (handleTasksMessage(msg, { onReportReadyToday: () => os.startManagerVisit() })) return;
 
       if (msg.type === 'providerCapabilities') {
         setProviderCapabilities({

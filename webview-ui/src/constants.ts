@@ -400,6 +400,33 @@ export const REMOTE_WORKERS_OPEN_Z_INDEX = 44;
 /** The greeter stands this many tiles in from the office's bottom-left corner
  *  (target tile (margin, rows-1-margin); nearest walkable tile if blocked). */
 export const GREETER_TILE_MARGIN = 3;
+
+// ── Phase M: Ansh's office, the Manager, the Tasks board ────
+/** Reserved ids for the two NPCs, next to GREETER_ID: never an agent's. */
+export const ANSH_NPC_ID = -1_000_000_001;
+export const MANAGER_NPC_ID = -1_000_000_002;
+/** The user's own chibi and the Manager: fixed skins (palette index, hue°). */
+export const ANSH_NPC_PALETTE = 1;
+export const ANSH_NPC_HUE_SHIFT = 0;
+export const MANAGER_NPC_PALETTE = 5;
+export const MANAGER_NPC_HUE_SHIFT = 0;
+/** Hover labels. */
+export const ANSH_NPC_LABEL = 'Ansh';
+export const MANAGER_NPC_LABEL = '📋 Manager';
+/** NPCs at their desks flip between two frames this often (slower than typing). */
+export const NPC_IDLE_FRAME_SEC = 0.6;
+/** On a report for today, the Manager stands by Ansh's desk this long. */
+export const MANAGER_VISIT_STAY_SEC = 8;
+/** An agent knocking on Ansh's door: twice (knock knock) every interval,
+ *  each bob lifting the sprite KNOCK_BOB_PX world px for the duration. */
+export const KNOCK_INTERVAL_SEC = 2;
+export const KNOCK_BOB_OFFSETS_SEC: readonly number[] = [0, 0.3];
+export const KNOCK_BOB_DURATION_SEC = 0.15;
+export const KNOCK_BOB_PX = 1;
+/** The Tasks board: above the overlays and the Intro bubble, below modals. */
+export const TASKS_BOARD_Z_INDEX = 47;
+/** Desktop side panel width (CSS px); phones get a full-screen sheet. */
+export const TASKS_BOARD_WIDTH_PX = 600;
 /** World px above the greeter's anchor (feet) where the bubble's bottom sits.
  *  Kept well above the head target (INTRO_TAIL_TARGET_RISE_WORLD) so the
  *  tail squares have a visible run between bubble and head. */

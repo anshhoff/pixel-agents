@@ -11,6 +11,7 @@ import {
   ZOOM_SCROLL_THRESHOLD,
 } from '../../constants.js';
 import { unlockAudio } from '../../notificationSound.js';
+import { openTasksBoard } from '../../tasks/tasksStore.js';
 import { transport } from '../../transport/index.js';
 import { pastDragThreshold } from '../camera.js';
 import { furnitureAt } from '../editor/editorActions.js';
@@ -218,7 +219,11 @@ export function OfficeCanvas({
         // Build selection render state
         const selectionRender: SelectionRenderState = {
           selectedAgentId: officeState.selectedAgentId,
-          hoveredAgentId: officeState.hoveredAgentId,
+          // A hovered NPC gets the same outline as a hovered agent.
+          hoveredAgentId:
+            officeState.hoveredAgentId ??
+            officeState.npcs.characterOf(officeState.npcs.hovered)?.id ??
+            null,
           hoveredTile: officeState.hoveredTile,
           seats: officeState.seats,
           characters: officeState.characters,
@@ -481,6 +486,11 @@ export function OfficeCanvas({
         });
       }
       officeState.hoveredAgentId = hitId;
+      // Phase M NPCs: a name label on hover; the Manager is clickable.
+      const npc =
+        hitId === null && petId === null ? officeState.getNpcAt(pos.worldX, pos.worldY) : null;
+      officeState.npcs.hovered = npc;
+      if (npc === 'manager' && canvas) canvas.style.cursor = 'pointer';
     },
     [
       officeState,
@@ -720,6 +730,12 @@ export function OfficeCanvas({
         return;
       }
 
+      // The Manager opens the Tasks board (phase M). Not selectable: NPCs aren't agents.
+      if (officeState.getNpcAt(pos.worldX, pos.worldY) === 'manager') {
+        openTasksBoard('board');
+        return;
+      }
+
       // Pet hit: toggle the heart bubble.
       const petId = officeState.getPetAt(pos.worldX, pos.worldY);
       if (petId !== null) {
@@ -798,6 +814,7 @@ export function OfficeCanvas({
     editorState.ghostCol = -1;
     editorState.ghostRow = -1;
     officeState.hoveredAgentId = null;
+    officeState.npcs.hovered = null;
     officeState.hoveredTile = null;
 
     // Reset cursor in non-edit mode so pointer doesn't get stuck after hovering a pet.

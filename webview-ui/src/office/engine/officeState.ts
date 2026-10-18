@@ -22,6 +22,7 @@ import {
   WAITING_BUBBLE_DURATION_SEC,
   ZONE_RETRY_INTERVAL_SEC,
 } from '../../constants.js';
+import { findNpcPlaces } from '../anshOffice.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
   createDefaultLayout,
@@ -49,6 +50,8 @@ import type { OfficeZones } from '../zones.js';
 import { isRoutedZoneLabel, NO_ZONES, parseZones, toZoneLabel, ZoneLabel } from '../zones.js';
 import { createCharacter, isSettledAtZoneTarget, updateCharacter } from './characters.js';
 import { advanceMatrixEffect, startMatrixEffect } from './matrixEffectState.js';
+import type { NpcKind } from './npcs.js';
+import { OfficeNpcs } from './npcs.js';
 import { createPet, updatePet } from './petEntity.js';
 import { anchorTile, closestFreeSeat, helperSeat } from './seatPlacement.js';
 import type { SmokeBreakState } from './smokeBreaks.js';
@@ -179,6 +182,10 @@ export class OfficeState {
    */
   greeter: Character | null = null;
 
+  /** Phase M's NPCs (Ansh, the Manager): outside `characters` like the
+   *  greeter, for the same reason. Absent without `Ansh`/`Manager` Areas. */
+  npcs: OfficeNpcs = new OfficeNpcs();
+
   /** World-space point the camera drifts to while the greeter is up
    *  (the bubble overlay recomputes it every frame: the combined center of the
    *  character and its speech bubble). An explicit cameraFollowId outranks it. */
@@ -199,6 +206,8 @@ export class OfficeState {
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
     this.zones = this.buildZones();
+    this.npcs = this.buildNpcs();
+    this.npcs.reserveSeats(this.seats);
     // Pets are built last because they need walkableTiles populated for spawn.
     this.rebuildPetsFromLayout(this.layout);
   }
@@ -214,6 +223,7 @@ export class OfficeState {
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
     this.zones = this.buildZones();
+    this.npcs = this.buildNpcs();
 
     // Shift character positions when grid expands left/up
     if (shift && (shift.col !== 0 || shift.row !== 0)) {
@@ -244,6 +254,7 @@ export class OfficeState {
     for (const seat of this.seats.values()) {
       seat.assigned = false;
     }
+    this.npcs.reserveSeats(this.seats); // never an agent's
 
     // First pass: try to keep characters at their existing seats
     for (const ch of this.characters.values()) {
@@ -1584,7 +1595,8 @@ export class OfficeState {
 
   private routeCharacter(ch: Character): void {
     const signals = this.destinationSignals(ch);
-    const intent = this.holdIntent(ch, pickDestination(signals));
+    const anshDoor = (this.zones.zones.get(ZoneLabel.ANSH)?.places.length ?? 0) > 0;
+    const intent = this.holdIntent(ch, pickDestination(signals, { anshDoor }));
     this.actOnIntent(ch, intent);
     // Mid-work smokers get a tag on their label; a smoke while waiting doesn't.
     ch.smokeBreak =
@@ -1941,6 +1953,9 @@ export class OfficeState {
     // Living office: smokers in company face each other, not the ashtray.
     if (this.zones.zones.has(ZoneLabel.SMOKE)) this.faceFellowSmokers();
 
+    // Phase M: Ansh at the desk, the Manager (and its report-time visit).
+    this.npcs.update(dt, this);
+
     // ── Pet FSM ────────────────────────────────────────────────
     for (const pet of this.pets) {
       updatePet(pet, dt, this.walkableTiles, this.characters, this.tileMap, this.blockedTiles);
@@ -1978,7 +1993,56 @@ export class OfficeState {
   getCharacters(): Character[] {
     const chars = Array.from(this.characters.values());
     if (this.greeter) chars.push(this.greeter);
+    chars.push(...this.npcs.characters());
     return chars;
+  }
+
+  // ── Phase M: the NPCs ─────────────────────────────────────────
+
+  /** The NPC under a world point (hover label, the Manager opens the Tasks
+   *  board). Separate from getCharacterAt: NPCs are never selected or followed. */
+  getNpcAt(worldX: number, worldY: number): NpcKind | null {
+    return this.npcs.hitTest(worldX, worldY);
+  }
+
+  /** Report time: the Manager walks into Ansh's office and back. */
+  startManagerVisit(): boolean {
+    return this.npcs.startManagerVisit();
+  }
+
+  private buildNpcs(): OfficeNpcs {
+    const tiles = this.layout.areaTiles;
+    if (!tiles || tiles.length === 0) return new OfficeNpcs();
+    const anshTiles: Array<{ col: number; row: number }> = [];
+    const managerTiles: Array<{ col: number; row: number }> = [];
+    for (let row = 0; row < this.layout.rows; row++) {
+      for (let col = 0; col < this.layout.cols; col++) {
+        const zone = toZoneLabel(tiles[row * this.layout.cols + col]);
+        if (zone === ZoneLabel.ANSH) anshTiles.push({ col, row });
+        else if (zone === ZoneLabel.MANAGER) managerTiles.push({ col, row });
+      }
+    }
+    if (anshTiles.length === 0 && managerTiles.length === 0) return new OfficeNpcs();
+    const electronics = this.buildElectronicsTileSet();
+    const footprints = new Set<string>();
+    for (const item of this.layout.furniture) {
+      const entry = getCatalogEntry(item.type);
+      if (!entry || entry.category === 'chairs') continue;
+      for (let dr = 0; dr < entry.footprintH; dr++) {
+        for (let dc = 0; dc < entry.footprintW; dc++)
+          footprints.add(`${item.col + dc},${item.row + dr}`);
+      }
+    }
+    return new OfficeNpcs(
+      findNpcPlaces({
+        seats: this.seats,
+        anshTiles,
+        managerTiles,
+        walkable: (col, row) => isWalkable(col, row, this.tileMap, this.blockedTiles),
+        underFurniture: (col, row) => footprints.has(`${col},${row}`),
+        facesElectronics: (seat) => this.isSeatFacingElectronics(seat, electronics),
+      }),
+    );
   }
 
   /** Get character at pixel position (for hit testing). Returns id or null.
