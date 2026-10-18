@@ -34,6 +34,7 @@ import {
 } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
 import { localSessionWatchEnabled } from './localSessions.js';
+import { createPermissionApprovals } from './permissions/index.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
 import { PtySessionManager } from './terminal/ptySessionManager.js';
@@ -250,9 +251,13 @@ async function main(): Promise<void> {
     // (standalone only; the VS Code adapter keeps its task log in memory).
     const runtime = new AgentRuntime(store, claudeProvider, { manager: {} });
 
+    // Permission requests local sessions wait on the board to answer.
+    const approvals = createPermissionApprovals(store);
+
     // Wire hook events: HTTP POST -> runtime -> hookEventHandler -> agents
     server.onHookEvent((providerId, event) => {
       runtime.handleHookEvent(providerId, event);
+      approvals.observeHookEvent(event);
     });
 
     // onSetHooksEnabled side effect: install/uninstall the named provider's
@@ -345,6 +350,7 @@ async function main(): Promise<void> {
       ptyManager,
       allowedHosts: args.allowedHosts,
       rotateToken: args.rotateToken,
+      approvals,
     });
     currentConfig = { port: config.port, token: config.token };
     if (args.rotateToken) {
@@ -446,6 +452,7 @@ async function main(): Promise<void> {
       // wait for them: exiting now would cancel the SIGKILL escalation and
       // leave a child that ignores SIGHUP orphaned on a dead server.
       await ptyManager.disposeAll();
+      approvals.dispose();
       runtime.dispose();
       server.stop();
       process.exit(0);

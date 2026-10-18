@@ -62,7 +62,9 @@ export type ServerMessage =
   | TerminalAvailability
   | TerminalSessionOpened
   | TerminalSessionClosed
-  | AgentDiagnostics;
+  | AgentDiagnostics
+  | PermissionPending
+  | PermissionResolved;
 
 export type ClientMessage =
   | WebviewReady
@@ -95,7 +97,8 @@ export type ClientMessage =
   | RequestTasks
   | RequestReport
   | WriteReportNow
-  | RequestTimeline;
+  | RequestTimeline
+  | AnswerPermission;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -588,6 +591,24 @@ export interface AgentDiagnostics {
   agents: Record<string, any>[];
 }
 
+export interface PermissionPending {
+  type: 'permissionPending';
+  requestId: string;
+  id: number;
+  tool: string;
+  detail: string;
+  since: number;
+}
+
+export interface PermissionResolved {
+  type: 'permissionResolved';
+  requestId: string;
+  id: number;
+  outcome: PermissionOutcome;
+}
+
+export type PermissionOutcome = 'allowed' | 'denied' | 'answeredInTerminal' | 'expired';
+
 export interface WebviewReady {
   type: 'webviewReady';
 }
@@ -746,3 +767,11 @@ export interface RequestTimeline {
   type: 'requestTimeline';
   id: number;
 }
+
+export interface AnswerPermission {
+  type: 'answerPermission';
+  requestId: string;
+  behavior: PermissionBehavior;
+}
+
+export type PermissionBehavior = 'allow' | 'deny';

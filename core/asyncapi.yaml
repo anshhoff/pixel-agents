@@ -147,6 +147,9 @@ components:
         - $ref: '#/components/schemas/TerminalSessionClosed'
         # Diagnostics
         - $ref: '#/components/schemas/AgentDiagnostics'
+        # Permission approvals from the board
+        - $ref: '#/components/schemas/PermissionPending'
+        - $ref: '#/components/schemas/PermissionResolved'
       discriminator: type
 
     ClientMessage:
@@ -184,6 +187,8 @@ components:
         - $ref: '#/components/schemas/WriteReportNow'
         # Useful signals
         - $ref: '#/components/schemas/RequestTimeline'
+        # Permission approvals from the board
+        - $ref: '#/components/schemas/AnswerPermission'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -1507,6 +1512,65 @@ components:
         exitCode:
           type: integer
 
+    # ── Permission approvals from the board ────────────────────────
+
+    PermissionPending:
+      description: |
+        A local Claude Code session is showing a permission dialog and its
+        PermissionRequest hook is waiting on this board for an answer. Sent
+        to every connected office, and again in the connect snapshot while it
+        is still pending. Answered with `answerPermission` (privileged
+        clients only); ends with `permissionResolved`. Relayed remote
+        sessions never produce one.
+      type: object
+      additionalProperties: false
+      required: [type, requestId, id, tool, detail, since]
+      properties:
+        type:
+          const: permissionPending
+        requestId:
+          type: string
+          description: Random id the hook script minted for this one request.
+        id:
+          type: integer
+          description: The agent whose session asked.
+        tool:
+          type: string
+          description: Tool name as Claude Code reports it (Bash, Edit, mcp__x__y, ...).
+        detail:
+          type: string
+          description: >-
+            What would run, capped server-side: the full command, the file
+            path and the first lines of the change, the URL, or the tool's
+            input as compact JSON.
+        since:
+          type: number
+          description: When the request arrived (ms since epoch).
+
+    PermissionResolved:
+      description: |
+        A pending permission request ended. `allowed` / `denied`: answered
+        from the board. `answeredInTerminal`: the session moved on (the
+        terminal answered first). `expired`: nobody answered within the wait
+        window, so the terminal dialog is the only way left.
+      type: object
+      additionalProperties: false
+      required: [type, requestId, id, outcome]
+      properties:
+        type:
+          const: permissionResolved
+        requestId:
+          type: string
+        id:
+          type: integer
+        outcome:
+          $ref: '#/components/schemas/PermissionOutcome'
+
+    PermissionOutcome:
+      description: How a pending permission request ended.
+      type: string
+      enum: [allowed, denied, answeredInTerminal, expired]
+
     # ── Client message variants ────────────────────────────────────
 
     WebviewReady:
@@ -1903,6 +1967,26 @@ components:
           const: requestTimeline
         id:
           type: integer
+
+    AnswerPermission:
+      description: >-
+        Answer a pending permission request, this once. Privileged only. Never
+        carries an "always allow" rule: the settings' deny rules still apply.
+      type: object
+      additionalProperties: false
+      required: [type, requestId, behavior]
+      properties:
+        type:
+          const: answerPermission
+        requestId:
+          type: string
+        behavior:
+          $ref: '#/components/schemas/PermissionBehavior'
+
+    PermissionBehavior:
+      description: The answer to a permission request.
+      type: string
+      enum: [allow, deny]
 
     # ── Supporting schemas ─────────────────────────────────────────
 

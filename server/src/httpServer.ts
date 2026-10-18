@@ -18,6 +18,8 @@ import {
   WS_CLOSE_FORBIDDEN_ORIGIN,
   WS_CLOSE_UNAUTHORIZED,
 } from './constants.js';
+import type { PermissionApprovals } from './permissions/approvalRegistry.js';
+import { registerPermissionRoutes } from './permissions/permissionRoutes.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { registerTerminalRoutes } from './terminal/terminalRoutes.js';
 import type { AgentState } from './types.js';
@@ -60,6 +62,8 @@ export interface HttpServerOptions {
    *  privileged standalone handshake may arrive under -- e.g. a reverse proxy's
    *  public name. See wsAuth.privilegedHostnames. */
   allowedHosts?: readonly string[];
+  /** Pending permission requests (standalone). Absent = no approvals route. */
+  approvals?: PermissionApprovals;
 }
 
 /** Result of createHttpServer(). */
@@ -115,6 +119,9 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
 
   registerHealthRoute(app);
   registerHookRoute(app, options);
+  if (options.approvals) {
+    registerPermissionRoutes(app, { token: options.token, approvals: options.approvals });
+  }
   registerWebSocketRoute(app, options, allowedHostnames);
   registerTerminalRoutes(app, {
     token: options.token,
@@ -273,6 +280,8 @@ function registerWebSocketRoute(
           onReloadAssets: options.onReloadAssets,
           privileged,
           ptyManager: options.ptyManager,
+          approvals: options.approvals,
+          client: `${request.ip} (${request.headers.host ?? '?'})`,
         });
       } catch {
         // Malformed JSON, ignore

@@ -21,6 +21,7 @@ import {
 import { collectDirectorySuggestions } from './directorySuggestions.js';
 import { hostDirectory } from './hostDirectory.js';
 import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
+import type { PermissionApprovals } from './permissions/approvalRegistry.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
@@ -79,6 +80,10 @@ export interface ClientMessageContext {
   /** PTY terminals for standalone-launched agents. Absent in VS Code embedded
    *  mode, where the editor owns terminal lifecycle. */
   ptyManager?: PtySessionManager;
+  /** Pending permission requests (standalone). Answered by `answerPermission`. */
+  approvals?: PermissionApprovals;
+  /** Who is connected (address + Host), for approvals.log. */
+  client?: string;
 }
 
 /**
@@ -201,6 +206,11 @@ export function handleClientMessage(
       }
       break;
     }
+
+    case 'answerPermission':
+      // Privileged only, like everything past the read-only gate above.
+      ctx.approvals?.answer(msg.requestId, msg.behavior, ctx.client);
+      break;
 
     case 'requestDiagnostics':
       // Point-to-point reply to the requesting socket (NOT a broadcast).
@@ -705,6 +715,10 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // exist once the layout flush creates them. Without this a reconnecting
   // client shows bare characters until each agent takes another turn.
   resendAgentActivity(send, store);
+
+  // 8b. Permission requests still waiting on an answer. Read-only clients see
+  // them too (the card, without buttons).
+  for (const pending of ctx.approvals?.pendingMessages() ?? []) send({ ...pending });
 
   // 9. Re-announce live terminals AFTER existingAgents, so a browser that
   // reloaded (or a second tab) rebuilds its drawer tabs. The PTY outlives the

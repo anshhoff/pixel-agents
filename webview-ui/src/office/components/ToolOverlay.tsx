@@ -43,6 +43,7 @@ import type {
 import { AgentLinkAction } from '../../inbox/AgentLinkAction.js';
 import { pausedTag } from '../../inbox/inboxModel.js';
 import { useInboxState } from '../../inbox/inboxStore.js';
+import { APPROVAL_LABEL_TEXT } from '../../permissions/approvalState.js';
 import type { PipState, WaitLevel } from '../../progress/progressFormat.js';
 import {
   countLabel,
@@ -115,6 +116,10 @@ interface ToolOverlayProps {
   /** Phone layout: with always-show on, unfocused labels shrink to their
    *  activity line (agentLabel.ts labelDensity). */
   compactLabels: boolean;
+  /** Agents with a permission request waiting on the board: their label
+   *  always shows, reads APPROVAL_LABEL_TEXT, and opens the card on click. */
+  approvalAgentIds?: ReadonlySet<number>;
+  onApprovalClick?: (id: number) => void;
 }
 
 /** Derive a short human-readable activity string from tools/status */
@@ -229,6 +234,8 @@ export function ToolOverlay({
   onCloseAgent,
   alwaysShowOverlay,
   compactLabels,
+  approvalAgentIds,
+  onApprovalClick,
 }: ToolOverlayProps) {
   // Needs-you inbox: usage-limit pauses and the Open-in-Claude / resume links.
   const inbox = useInboxState();
@@ -297,6 +304,7 @@ export function ToolOverlay({
     const isSelected = selectedId === id;
     const isHovered = hoveredId === id;
     const isSub = ch.isSubagent;
+    const needsApproval = !isSub && approvalAgentIds?.has(id) === true;
 
     // Speech bubble (permission dots / done checkmark) — rendered here in
     // the DOM, above the label panels (OVERLAY_BUBBLE_Z_INDEX over the label panels), for every
@@ -361,7 +369,7 @@ export function ToolOverlay({
       (selectedId === ch.parentAgentId || hoveredId === ch.parentAgentId);
     const showLabel = isSub
       ? isSelected || isHovered || parentFocused
-      : alwaysShowOverlay || isSelected || isHovered;
+      : alwaysShowOverlay || isSelected || isHovered || needsApproval;
     if (!showLabel) {
       // Under always-show this helper used to be labelled: keep its marker.
       const keep = isSub && alwaysShowOverlay;
@@ -379,7 +387,7 @@ export function ToolOverlay({
     // (A turn that stopped on a usage limit keeps its label: the ⏸️ tag says why.)
     const isDone =
       ch.bubbleType === 'waiting' && !ch.waitingAwaitingInput && !(id > 0 && inbox.limits[id]);
-    if (isDone && !isSelected && !isHovered) {
+    if (isDone && !isSelected && !isHovered && !needsApproval) {
       entries.push({ id, bubble: bubbleNode, marker: marker(), label: null });
       continue;
     }
@@ -388,13 +396,15 @@ export function ToolOverlay({
     // no stage track, no waiting badge (the idle time says it). A pending
     // approval still reads as one.
     const sleep = isSub ? undefined : agentSleep[id];
-    const asleep = sleep?.sleeping === true && ch.bubbleType !== 'permission';
+    const asleep = sleep?.sleeping === true && ch.bubbleType !== 'permission' && !needsApproval;
 
     // Get activity text
     const hasWaitingBubble = ch.bubbleType === 'waiting';
     const subHasPermission = isSub && ch.bubbleType === 'permission';
     let activityText: string;
-    if (asleep) {
+    if (needsApproval) {
+      activityText = APPROVAL_LABEL_TEXT;
+    } else if (asleep) {
       activityText = sleepLabel(sleep.idleSince, now);
     } else if (hasWaitingBubble && ch.waitingAwaitingInput) {
       // Idle, waiting on the user -> dedicated label. A finished turn (Stop)
@@ -423,7 +433,8 @@ export function ToolOverlay({
 
     // Determine dot color
     const tools = agentTools[id];
-    const hasPermission = subHasPermission || tools?.some((t) => t.permissionWait && !t.done);
+    const hasPermission =
+      needsApproval || subHasPermission || tools?.some((t) => t.permissionWait && !t.done);
     const hasActiveTools = tools?.some((t) => !t.done);
     const isActive = ch.isActive;
     const hasWaiting = ch.bubbleType === 'waiting';
@@ -490,7 +501,7 @@ export function ToolOverlay({
       (waitMs !== null ? WAIT_BADGE_FONT_PX + PROGRESS_ROW_GAP_PX : 0) +
       (helpers > 0 ? HELPERS_LINE_FONT_PX : 0);
 
-    const dimmed = alwaysShowOverlay && !isSelected && !isHovered;
+    const dimmed = alwaysShowOverlay && !isSelected && !isHovered && !needsApproval;
     // A focused label may grow wide enough for the whole title (never wider
     // than the screen, which a phone is narrower than).
     const panelMaxWidth = compact
@@ -504,7 +515,8 @@ export function ToolOverlay({
         style={{
           left: screenX,
           top,
-          pointerEvents: isSelected ? 'auto' : 'none',
+          pointerEvents: isSelected || needsApproval ? 'auto' : 'none',
+          cursor: needsApproval ? 'pointer' : undefined,
           opacity: dimmed ? (isSub ? 0.5 : 0.75) : 1,
           zIndex: isSelected ? OVERLAY_LABEL_SELECTED_Z_INDEX : OVERLAY_LABEL_Z_INDEX,
         }}
@@ -513,6 +525,15 @@ export function ToolOverlay({
         data-label-box=""
         data-label-density={compact ? 'compact' : 'full'}
         data-sleeping={asleep || undefined}
+        data-needs-approval={needsApproval || undefined}
+        onClick={
+          needsApproval
+            ? (e) => {
+                e.stopPropagation();
+                onApprovalClick?.(id);
+              }
+            : undefined
+        }
       >
         <div
           className={`flex items-center border-border pixel-panel whitespace-nowrap ${compact ? 'px-4 pt-1 pb-2 gap-4' : 'px-8 pt-2 pb-4 gap-5'} ${panelMaxWidth === undefined ? 'max-w-2xs' : ''}`}
