@@ -338,8 +338,11 @@ Fastify v5 with `@fastify/cors`, `@fastify/websocket`, and (in standalone) `@fas
 | GET    | `/api/health`            | Liveness: `{ ok, version, port, pid }`  |
 | POST   | `/api/permissions/wait`  | Bearer; PermissionRequest long-poll     |
 | POST   | `/api/usage`             | Bearer; status line usage reports       |
+| POST   | `/mcp`                   | Bearer; read-only office MCP server     |
 | GET    | `/ws`                    | Bidirectional protocol channel          |
 | GET    | `/*` (standalone only)   | Webview SPA via `@fastify/static`       |
+
+**Office MCP server** (`server/src/mcp/`, standalone only): `/mcp` speaks MCP over Streamable HTTP (stateless, JSON responses, no SDK -- `mcpProtocol.ts` handles `initialize`/`ping`/`tools/list`/`tools/call`). Five READ-ONLY tools (`officeTools.ts`): `list_agents` (reuses Ansh's `buildSituation` over `runtime.officeSources`, with agent ids), `read_agent` (transcript tail: prompts, replies, tools run, failures), `pending_approvals`, `tasks_today`, `usage`. Read-only by construction: tools get an `OfficeView` of getters only -- adding an acting tool means widening that interface on purpose. Gates (`mcpRequestRefusal`): the server token as `Authorization: Bearer`, then an allowed Host, then an allowed Origin when one is sent. Agent-written text is labelled as data in every tool that returns it. Connect: `claude mcp add --transport http pixel-agents http://127.0.0.1:<port>/mcp --header "Authorization: Bearer <~/.pixel-agents/standalone-token>"`.
 
 `/ws` is gated in **two tiers**, because messages over this socket launch shells, grant durable machine-wide hook consent, and rewrite persisted state.
 

@@ -350,3 +350,18 @@ export const PALETTE_COUNT = 6;
  *  clientMessageHandler to guard saveAgentSeats payloads from a remote or
  *  hand-edited source corrupting the stored values with out-of-range values. */
 export const HUE_SHIFT_MAX_DEG = 360;
+
+// ── Office MCP server (mcp/) ─────────────────────────────────
+/** Where Claude (or any MCP client) reaches the office: Streamable HTTP,
+ *  stateless, JSON responses only. Standalone only. */
+export const MCP_PATH = '/mcp';
+/** MCP protocol revisions this server speaks, newest first. A client asking
+ *  for one of these gets it back; anything else is answered with the first. */
+export const MCP_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
+/** read_agent: transcript items returned by default, and at most. */
+export const MCP_READ_AGENT_DEFAULT_ITEMS = 20;
+export const MCP_READ_AGENT_MAX_ITEMS = 60;
+/** read_agent reads at most this much from the end of a transcript. */
+export const MCP_TRANSCRIPT_TAIL_BYTES = 512 * 1024;
+/** read_agent cuts each message to this many characters. */
+export const MCP_ITEM_TEXT_MAX = 1500;

@@ -16,6 +16,7 @@ import type { HookProvider } from '../../core/src/provider.js';
 import { createAgentState } from './agentState.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { PhoneAlerts, type PhoneAlertsOptions } from './alerts.js';
+import type { AnshSources } from './ansh/anshBrain.js';
 import { AnshBrain } from './ansh/anshBrain.js';
 import { REMOTE_AGENT_TTL_MS, REMOTE_EXPIRY_CHECK_INTERVAL_MS } from './constants.js';
 import { DismissalTracker } from './dismissalTracker.js';
@@ -168,6 +169,9 @@ export class AgentRuntime {
   /** Ansh's brain: the user's character thinks about the office and comments
    *  (ansh/anshBrain.ts). Looks only once started -- the standalone CLI does. */
   readonly ansh: AnshBrain;
+  /** What the office looks like beyond the store -- waits, failures, sleep,
+   *  today's totals. Read by Ansh's brain and the office MCP server (mcp/). */
+  readonly officeSources: AnshSources;
   /** Needs-you inbox: Open-in-Claude links + usage-limit pauses (inbox/). */
   readonly inbox: InboxTracker;
   /** Week wall totals + weather (see fun/funServices.ts). Weather polls only once started. */
@@ -220,33 +224,33 @@ export class AgentRuntime {
       ...manager,
       dataDir: managerDataDir,
     });
-    this.ansh = new AnshBrain(
-      store,
-      {
-        waitingSinceOf: (id) => this.progress.waitingSinceOf(id),
-        failuresOf: (id) => {
-          for (const m of this.signals.snapshot()) {
-            if (m.type === 'agentTrouble' && m.id === id && typeof m.failures === 'number') {
-              return m.failures;
-            }
+    this.officeSources = {
+      waitingSinceOf: (id) => this.progress.waitingSinceOf(id),
+      failuresOf: (id) => {
+        for (const m of this.signals.snapshot()) {
+          if (m.type === 'agentTrouble' && m.id === id && typeof m.failures === 'number') {
+            return m.failures;
           }
-          return 0;
-        },
-        isSleeping: (id) => this.localSessions.isSleeping(id),
-        todayTasks: () => {
-          const date = localDateKey((manager?.now ?? Date.now)());
-          const { done, open, waiting } = buildReportData(date, this.tasks.tasksFor(date)).totals;
-          return { done, open, waiting };
-        },
-        todayStats: () => {
-          for (const m of this.progress.snapshot()) {
-            if (m.type === 'dailyStats') return { prs: m.prs.length, pushes: m.pushes.length };
-          }
-          return { prs: 0, pushes: 0 };
-        },
+        }
+        return 0;
       },
-      { ...manager, dataDir: managerDataDir },
-    );
+      isSleeping: (id) => this.localSessions.isSleeping(id),
+      todayTasks: () => {
+        const date = localDateKey((manager?.now ?? Date.now)());
+        const { done, open, waiting } = buildReportData(date, this.tasks.tasksFor(date)).totals;
+        return { done, open, waiting };
+      },
+      todayStats: () => {
+        for (const m of this.progress.snapshot()) {
+          if (m.type === 'dailyStats') return { prs: m.prs.length, pushes: m.pushes.length };
+        }
+        return { prs: 0, pushes: 0 };
+      },
+    };
+    this.ansh = new AnshBrain(store, this.officeSources, {
+      ...manager,
+      dataDir: managerDataDir,
+    });
     this.inbox = new InboxTracker(store, options.inbox);
     setInboxTracker(this.inbox);
     this.usage = new UsageMeter(store, options.usage ?? (store.getAdapter() ? {} : { file: null }));
