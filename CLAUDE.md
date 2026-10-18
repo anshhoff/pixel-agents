@@ -332,6 +332,7 @@ Fastify v5 with `@fastify/cors`, `@fastify/websocket`, and (in standalone) `@fas
 | ------ | ------------------------ | --------------------------------------- |
 | POST   | `/api/hooks/:providerId` | Bearer-authenticated hook event ingress |
 | GET    | `/api/health`            | Liveness: `{ ok, version, port, pid }`  |
+| POST   | `/api/permissions/wait`  | Bearer; PermissionRequest long-poll     |
 | GET    | `/ws`                    | Bidirectional protocol channel          |
 | GET    | `/*` (standalone only)   | Webview SPA via `@fastify/static`       |
 
@@ -362,7 +363,10 @@ Per-agent runtime data: provider reference, session key, transcript-fallback fie
   layout.json              OfficeLayout (shared across surfaces)
   server.json              { port, pid, authToken }
   hooks/claude-hook.js     Bundled hook script (CJS, shebang)
+  approvals.log            One tab-separated line per approval answered from the board
 ```
+
+**Approvals from the board** (`server/src/permissions/`, `webview-ui/src/permissions/`): Claude Code shows its terminal permission dialog at once and still applies a PermissionRequest hook's later `decision`, so after the normal fan-out the hook long-polls ONE live standalone server (`/api/permissions/wait`, its Bearer token) and prints `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"|"deny"}}}` only when the board answered — rebuilt from the two validated fields, never passing through anything else (no "always allow", no `updatedPermissions`). Every other path exits 0 silently and the terminal decides. The hook entry for PermissionRequest alone has `timeout: 660` (the server expires a request at 10 min, the hook gives up at 10.5). `PermissionApprovals` broadcasts `permissionPending` / `permissionResolved` (`allowed`, `denied`, `answeredInTerminal` = the session's PreToolUse/PostToolUse/Stop/SessionEnd arrived after the request or the hook went away, `expired`) and puts pending ones in the connect snapshot; `answerPermission` is privileged like every message past the read-only gate. Local sessions only (relayed `pixel_source` sessions are never registered). Kill switches: `PIXEL_AGENTS_APPROVALS=off` and `approvalsEnabled: false` at the top of config.json (kept through every config write).
 
 `FileStateAdapter({ namespace })` backs both runtimes. Per-namespace settings: `soundEnabled`, `lastSeenVersion`, `alwaysShowLabels`, `watchAllSessions`, `hooksInfoShown` (the hooks preference is per-provider and machine-global, at the config top level). Running both surfaces in parallel never clobbers either.
 
