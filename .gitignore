@@ -52,3 +52,4 @@ agent-orchestrator.yaml
 tasks/
 # ...but not the Manager's task log source (server/src/tasks/).
 !/server/src/tasks/
+!/webview-ui/src/tasks/
