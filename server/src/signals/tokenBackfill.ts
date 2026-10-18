@@ -21,7 +21,9 @@
  * A closed day is scanned once: its result is cached in the token dir as
  * <date>.<TOKENS_BACKFILL_SUFFIX> (the meter's file shape, repos included) and
  * never re-scanned. Today keeps moving, so its scan is redone when the last one
- * is older than TOKENS_BACKFILL_TODAY_TTL_MS; the hub folds it into the meter,
+ * is older than TOKENS_BACKFILL_TODAY_TTL_MS -- from where the last one stopped
+ * in each transcript (they are only ever appended to), so a day of hundreds of
+ * MB is read once, not every few minutes. The hub folds it into the meter,
  * which is what puts the TODAY strip right (signalsHub.ts). One scan runs at a
  * time; a second ask waits for it.
  */
@@ -36,6 +38,7 @@ import {
   TOKENS_BACKFILL_MAX_DEPTH,
   TOKENS_BACKFILL_SUFFIX,
   TOKENS_BACKFILL_TODAY_TTL_MS,
+  TOKENS_BACKFILL_YIELD_LINES,
 } from './constants.js';
 import { localDateKey, startOfLocalDay } from './localDay.js';
 import {
@@ -59,10 +62,23 @@ export interface TokenBackfillOptions {
 /** Responses by message id, per date. */
 export type ScannedDays = Map<string, Map<string, CountedMessage>>;
 
+/** How far a transcript has been read: the byte after its last whole line, and
+ *  the repo its first cwd named (for later records without one). */
+export interface ReadMark {
+  offset: number;
+  fileRepo?: string;
+}
+
 export class TokenBackfill {
   /** Closed days read so far (from a scan or the cache file). */
   private readonly closed = new Map<string, Map<string, CountedMessage>>();
-  private today: { date: string; at: number; messages: Map<string, CountedMessage> } | null = null;
+  private today: {
+    date: string;
+    at: number;
+    messages: Map<string, CountedMessage>;
+    /** Per transcript, how far today's scans have read it. */
+    marks: Map<string, ReadMark>;
+  } | null = null;
   private running: Promise<void> | null = null;
   private disposed = false;
 
@@ -129,20 +145,34 @@ export class TokenBackfill {
   private async scan(dates: string[]): Promise<void> {
     const wanted = new Set(dates);
     const found: ScannedDays = new Map();
+    const today = this.todayKey();
+    if (this.today?.date !== today) {
+      this.today = { date: today, at: 0, messages: new Map(), marks: new Map() };
+    }
+    const state = this.today;
+    // Today's responses merge into what earlier scans found (by message id, at
+    // the largest figures, so reading a record twice changes nothing).
+    if (wanted.has(today)) found.set(today, state.messages);
+    // A scan that includes a closed day reads each file from its start anyway;
+    // one for today alone resumes each file where the last one stopped.
+    const resume = dates.every((date) => date >= today);
     const earliest = startOfLocalDay(dateMs(dates.reduce((a, b) => (a < b ? a : b))));
     try {
-      for (const file of await this.transcriptsSince(earliest)) {
+      for (const { file, size } of await this.transcriptsSince(earliest)) {
         if (this.disposed) return;
-        await scanTranscript(file, wanted, found);
+        const mark = resume ? state.marks.get(file) : undefined;
+        if (mark && mark.offset === size) continue; // nothing new
+        // A file shorter than its mark was replaced: read it again from the top.
+        const from = mark && mark.offset < size ? mark : { offset: 0 };
+        state.marks.set(file, await scanTranscript(file, wanted, found, from));
       }
     } catch (err) {
       console.warn('[Pixel Agents] Token backfill: reading the transcripts failed:', err);
     }
-    const today = this.todayKey();
     for (const date of dates) {
       const messages = found.get(date) ?? new Map<string, CountedMessage>();
       if (date === today) {
-        this.today = { date, at: this.options.now(), messages };
+        state.at = this.options.now();
       } else if (date < today) {
         this.closed.set(date, messages);
         if (this.options.cacheDir !== null) {
@@ -153,9 +183,9 @@ export class TokenBackfill {
   }
 
   /** Every .jsonl under the projects dir (sessions and their subagents/) last
-   *  written at or after `since`. */
-  private async transcriptsSince(since: number): Promise<string[]> {
-    const files: string[] = [];
+   *  written at or after `since`, with its size. */
+  private async transcriptsSince(since: number): Promise<{ file: string; size: number }[]> {
+    const files: { file: string; size: number }[] = [];
     const walk = async (dir: string, depth: number): Promise<void> => {
       let entries: fs.Dirent[];
       try {
@@ -169,7 +199,8 @@ export class TokenBackfill {
           if (depth < TOKENS_BACKFILL_MAX_DEPTH) await walk(full, depth + 1);
         } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
           try {
-            if ((await fs.promises.stat(full)).mtimeMs >= since) files.push(full);
+            const stat = await fs.promises.stat(full);
+            if (stat.mtimeMs >= since) files.push({ file: full, size: stat.size });
           } catch {
             /* gone between readdir and stat */
           }
@@ -190,21 +221,35 @@ function dateMs(date: string): number {
 }
 
 /**
- * Stream one transcript, folding each assistant record's usage on a wanted
- * day into `found`. A record's repo is its cwd's basename; one without a cwd
- * takes the first the file named, else `unknown`. Malformed lines (a partial
- * write at the tail is normal) are skipped.
+ * Stream one transcript from `from.offset`, folding each assistant record's
+ * usage on a wanted day into `found`. A record's repo is its cwd's repo
+ * (repoNameForCwd); one without a cwd takes the first the file named, else
+ * `unknown`. Malformed lines are skipped. Returns where the next read should
+ * start: after the last whole line, so a record still being written at the
+ * tail is read whole next time instead of half now.
  */
 export async function scanTranscript(
   file: string,
   wanted: ReadonlySet<string>,
   found: ScannedDays,
-): Promise<void> {
-  let fileRepo: string | undefined;
-  const stream = fs.createReadStream(file, { encoding: 'utf-8' });
+  from: ReadMark = { offset: 0 },
+): Promise<ReadMark> {
+  let fileRepo = from.fileRepo;
+  let offset = from.offset;
+  let lineCount = 0;
+  const stream = fs.createReadStream(file, { encoding: 'utf-8', start: from.offset });
   const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
   try {
     for await (const line of lines) {
+      // readline also hands over a last line with no newline after it: a record
+      // mid-write. Count only lines whose newline the stream has read.
+      const end = offset + Buffer.byteLength(line, 'utf-8') + 1;
+      if (end > from.offset + stream.bytesRead) break;
+      offset = end;
+      // Let the board answer between stretches of a long day's transcript.
+      if (++lineCount % TOKENS_BACKFILL_YIELD_LINES === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
       if (!line.includes('"usage"')) continue;
       let record: { timestamp?: unknown; cwd?: unknown };
       try {
@@ -245,4 +290,5 @@ export async function scanTranscript(
     lines.close();
     stream.destroy();
   }
+  return { offset, fileRepo };
 }

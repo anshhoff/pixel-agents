@@ -7,7 +7,7 @@ import { AgentStateStore } from '../src/agentStateStore.js';
 import { ProgressTracker } from '../src/progress/progressTracker.js';
 import { TOKENS_BACKFILL_SUFFIX, TOKENS_BACKFILL_TODAY_TTL_MS } from '../src/signals/constants.js';
 import { SignalsHub } from '../src/signals/signalsHub.js';
-import { TokenBackfill } from '../src/signals/tokenBackfill.js';
+import { type ScannedDays, scanTranscript, TokenBackfill } from '../src/signals/tokenBackfill.js';
 import { fromCounted } from '../src/signals/tokenMeter.js';
 
 /**
@@ -291,3 +291,82 @@ describe('SignalsHub with the backfill', () => {
     progress.dispose();
   });
 });
+
+describe('scanTranscript resuming (today, read once)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-backfill-resume-'));
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const wanted = new Set([TODAY]);
+  const line = (id: string, input: number) =>
+    assistantLine({ id, at: T0, cwd: '/w/pixel-agents', input });
+
+  it('stops before a half-written last line and reads it whole next time', async () => {
+    const file = path.join(dir, 's.jsonl');
+    const whole = line('m1', 10);
+    const next = line('m2', 20);
+    fs.writeFileSync(file, `${whole}\n${next.slice(0, 25)}`);
+    const found: ScannedDays = new Map();
+
+    const mark = await scanTranscript(file, wanted, found);
+    expect(mark.offset).toBe(Buffer.byteLength(whole) + 1);
+    expect(summarize(found.get(TODAY))).toEqual([['m1', 'pixel-agents', 10, 0]]);
+
+    fs.writeFileSync(file, `${whole}\n${next}\n`);
+    const after = await scanTranscript(file, wanted, found, mark);
+    expect(after.offset).toBe(fs.statSync(file).size);
+    expect(summarize(found.get(TODAY))).toEqual([
+      ['m1', 'pixel-agents', 10, 0],
+      ['m2', 'pixel-agents', 20, 0],
+    ]);
+  });
+
+  it('keeps the file repo for appended records without a cwd', async () => {
+    const file = path.join(dir, 's.jsonl');
+    write(file, [assistantLine({ id: 'm8', at: T0, cwd: '/w/clam.ai', input: 1 })]);
+    const found: ScannedDays = new Map();
+    const mark = await scanTranscript(file, wanted, found);
+    fs.appendFileSync(file, `${assistantLine({ id: 'm9', at: T0, input: 5 })}\n`);
+    await scanTranscript(file, wanted, found, mark);
+    expect(summarize(found.get(TODAY))).toEqual([
+      ['m8', 'clam.ai', 1, 0],
+      ['m9', 'clam.ai', 5, 0],
+    ]);
+  });
+
+  it("a resumed today's scan matches a fresh full read", async () => {
+    const file = path.join(projects(dir), 'p', 's.jsonl');
+    write(file, [line('a', 1), line('b', 2)]);
+    let clock = T0;
+    const backfill = new TokenBackfill({
+      projectsDir: projects(dir),
+      cacheDir: null,
+      now: () => clock,
+    });
+    await backfill.usageFor([TODAY]);
+
+    // More of the session lands, including a bigger figure for a known response.
+    fs.appendFileSync(file, `${line('c', 3)}\n${line('b', 7)}\n`);
+    clock += TOKENS_BACKFILL_TODAY_TTL_MS + 1;
+    const resumed = summarize((await backfill.usageFor([TODAY])).get(TODAY));
+
+    const fresh = new TokenBackfill({
+      projectsDir: projects(dir),
+      cacheDir: null,
+      now: () => clock,
+    });
+    expect(resumed).toEqual(summarize((await fresh.usageFor([TODAY])).get(TODAY)));
+    expect(resumed).toEqual([
+      ['a', 'pixel-agents', 1, 0],
+      ['b', 'pixel-agents', 7, 0],
+      ['c', 'pixel-agents', 3, 0],
+    ]);
+  });
+});
+
+function projects(dir: string): string {
+  return path.join(dir, 'projects');
+}

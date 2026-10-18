@@ -50,6 +50,9 @@ export const TOKENS_BACKFILL_TODAY_TTL_MS = 5 * 60_000;
 /** How deep under ~/.claude/projects transcripts are looked for: a project
  *  dir's sessions (depth 1), and a session dir's subagents/ (depth 3). */
 export const TOKENS_BACKFILL_MAX_DEPTH = 3;
+/** Token backfill: yield to the event loop every this many transcript lines,
+ *  so a long scan never stalls the board. */
+export const TOKENS_BACKFILL_YIELD_LINES = 2_000;
 
 // ── Notice board ─────────────────────────────────────────────
 
