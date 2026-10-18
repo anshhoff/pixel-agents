@@ -36,7 +36,13 @@ import { FileStateAdapter } from './fileStateAdapter.js';
 import { weatherEnabled } from './fun/funConstants.js';
 import { localSessionWatchEnabled } from './localSessions.js';
 import { createPermissionApprovals } from './permissions/index.js';
-import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
+import {
+  claudeProvider,
+  copyHookScript,
+  hookProviderById,
+  refreshStatusLineScript,
+  setStatusLineInstalled,
+} from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
 import { PtySessionManager } from './terminal/ptySessionManager.js';
 import { isLoopbackHost, normalizeHostname } from './wsAuth.js';
@@ -254,6 +260,8 @@ async function main(): Promise<void> {
 
     // Permission requests local sessions wait on the board to answer.
     const approvals = createPermissionApprovals(store);
+    // Ansh's brain reads what is pending (to comment on it); it never answers.
+    runtime.ansh.setPendingApprovalsSource(() => approvals.pendingMessages());
 
     // Wire hook events: HTTP POST -> runtime -> hookEventHandler -> agents
     server.onHookEvent((providerId, event) => {
@@ -348,12 +356,17 @@ async function main(): Promise<void> {
       assetCache,
       onSetHooksEnabled,
       onReloadAssets,
+      // The usage meter's status line (Settings toggle): copy the script from
+      // this package, then write settings.json -- or remove the entry.
+      onSetUsageMeterEnabled: (enabled) => setStatusLineInstalled(packageRoot, enabled),
       ptyManager,
       allowedHosts: args.allowedHosts,
       rotateToken: args.rotateToken,
       approvals,
     });
     currentConfig = { port: config.port, token: config.token };
+    // While the usage meter is on, Claude Code runs this package's status line.
+    refreshStatusLineScript(packageRoot);
     if (args.rotateToken) {
       console.log(
         '[Pixel Agents] Server token rotated: URLs carrying the old token no longer grant access. Open the new URL below on each device.',
@@ -429,6 +442,9 @@ async function main(): Promise<void> {
     // The Manager's 19:00 daily report (standalone only). PIXEL_AGENTS_MANAGER=off
     // keeps claude from ever being run for it.
     runtime.startManagerReports();
+    // Ansh's brain: looks at the office and comments (standalone only). Same
+    // kill switches as the Manager for claude; built-in thoughts otherwise.
+    runtime.startAnshBrain();
     // Real weather in the office windows (city guessed once from the IP; offline = none).
     if (weatherEnabled()) runtime.startWeather();
 

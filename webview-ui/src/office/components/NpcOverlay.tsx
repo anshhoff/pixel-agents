@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { getAnshState } from '../../ansh/anshStore.js';
 import {
   ANSH_NPC_LABEL,
   CHARACTER_SITTING_OFFSET_PX,
@@ -38,7 +39,9 @@ export function NpcOverlay({ officeState, containerRef, zoom, panRef }: NpcOverl
     let last: LabelPos | null = null;
     const tick = () => {
       rafId = requestAnimationFrame(tick);
-      const kind = officeState.npcs.hovered;
+      // While Ansh is talking, his bubble is his label.
+      const hovered = officeState.npcs.hovered;
+      const kind = hovered === 'ansh' && getAnshState().bubble ? null : hovered;
       const ch = officeState.npcs.characterOf(kind);
       const el = containerRef.current;
       let next: LabelPos | null = null;

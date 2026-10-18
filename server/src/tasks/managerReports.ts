@@ -272,8 +272,8 @@ export function templateReport(data: ReportData): string {
 
 // ── Running claude ───────────────────────────────────────────
 
-/** execFile (never a shell), prompt on stdin. */
-const runClaudeProcess: ClaudeRunner = ({ file, args, input, cwd, timeout, maxBuffer }) =>
+/** execFile (never a shell), prompt on stdin. Shared with Ansh's brain (ansh/anshBrain.ts). */
+export const runClaudeProcess: ClaudeRunner = ({ file, args, input, cwd, timeout, maxBuffer }) =>
   new Promise((resolve, reject) => {
     const child = execFile(
       file,
@@ -291,7 +291,7 @@ const runClaudeProcess: ClaudeRunner = ({ file, args, input, cwd, timeout, maxBu
   });
 
 /** Why a run failed, in a few words: never the prompt, which went in on stdin. */
-function failureReason(err: unknown): string {
+export function failureReason(err: unknown): string {
   const e = err as NodeJS.ErrnoException & { killed?: boolean };
   if (e?.killed) return `no answer in ${MANAGER_CLAUDE_TIMEOUT_MS / 1000}s`;
   if (e?.code === 'ENOENT') return 'claude not found on PATH';
@@ -512,7 +512,7 @@ function writeReport(dir: string, report: ReportFile): boolean {
 }
 
 /** Atomic write (tmp + rename). Returns false, logged, on failure. */
-function writeJsonAtomic(file: string, data: unknown): boolean {
+export function writeJsonAtomic(file: string, data: unknown): boolean {
   const tmp = `${file}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });

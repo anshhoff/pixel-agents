@@ -111,6 +111,9 @@ components:
         - $ref: '#/components/schemas/TaskUpdated'
         - $ref: '#/components/schemas/ReportReady'
         - $ref: '#/components/schemas/Report'
+        # Ansh's brain: thoughts and moves of the user's own character
+        - $ref: '#/components/schemas/AnshBrainState'
+        - $ref: '#/components/schemas/AnshThought'
         # Useful signals: trouble, loops, timeline, tokens, notice board
         - $ref: '#/components/schemas/AgentTrouble'
         - $ref: '#/components/schemas/AgentLoop'
@@ -120,6 +123,9 @@ components:
         # Needs-you inbox: Open in Claude + usage limits
         - $ref: '#/components/schemas/AgentLink'
         - $ref: '#/components/schemas/AgentLimit'
+        # Subscription usage meter (the server room's wall display)
+        - $ref: '#/components/schemas/SubscriptionUsage'
+        - $ref: '#/components/schemas/UsageMeterStatus'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -190,12 +196,17 @@ components:
         - $ref: '#/components/schemas/RequestTasks'
         - $ref: '#/components/schemas/RequestReport'
         - $ref: '#/components/schemas/WriteReportNow'
+        # Ansh's brain
+        - $ref: '#/components/schemas/SetAnshBrainEnabled'
+        - $ref: '#/components/schemas/AskAnsh'
         # Useful signals
         - $ref: '#/components/schemas/RequestTimeline'
         # Permission approvals from the board
         - $ref: '#/components/schemas/AnswerPermission'
         # Manager: time per repo
         - $ref: '#/components/schemas/RequestTimeReport'
+        # Subscription usage meter
+        - $ref: '#/components/schemas/SetUsageMeterEnabled'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -614,6 +625,63 @@ components:
         resetsAt:
           type: integer
 
+    UsageWindow:
+      description: |
+        One subscription rate-limit window as Claude Code's status line reports
+        it: how much of it is used (0-100) and when it resets (epoch ms).
+      type: object
+      additionalProperties: false
+      required: [usedPercentage, resetsAt]
+      properties:
+        usedPercentage:
+          type: number
+        resetsAt:
+          type: integer
+
+    SubscriptionUsage:
+      description: |
+        The Claude subscription's usage, for the server room's meter: the
+        5-hour session window and the 7-day weekly cap, each absent when
+        unknown or already reset. Reported by the Pixel Agents status line
+        script (Claude Code passes `rate_limits` only to a status line, and
+        only for Pro/Max subscribers after a session's first response).
+        `updatedAt` (epoch ms) is when the last report arrived. Sent on
+        connect when known and whenever it changes.
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: subscriptionUsage
+        fiveHour:
+          $ref: '#/components/schemas/UsageWindow'
+        sevenDay:
+          $ref: '#/components/schemas/UsageWindow'
+        updatedAt:
+          type: integer
+
+    UsageMeterState:
+      description: |
+        Whether the usage meter's status line is in ~/.claude/settings.json:
+        `on` (ours), `off` (no status line), `foreign` (the user's own status
+        line, which Pixel Agents never replaces) or `unreadable` (the file
+        cannot be parsed, so nothing is written).
+      type: string
+      enum: [on, off, foreign, unreadable]
+
+    UsageMeterStatus:
+      description: |
+        The usage meter's ACTUAL install state, re-derived from disk. Sent on
+        connect and to every office after a toggle, whatever its outcome.
+      type: object
+      additionalProperties: false
+      required: [type, state]
+      properties:
+        type:
+          const: usageMeterStatus
+        state:
+          $ref: '#/components/schemas/UsageMeterState'
+
     TaskStatus:
       type: string
       enum: [in_progress, waiting, done]
@@ -706,6 +774,68 @@ components:
           const: reportReady
         date:
           type: string
+
+    AnshAction:
+      description: >-
+        What Ansh does with a thought: walk over to an agent (`visit`, with
+        targetId), go talk to the Manager (`chatManager`), take a short walk
+        (`stretch`), or stay at his desk (`stay`). Moves only: Ansh never acts on
+        an agent.
+      type: string
+      enum: [visit, chatManager, stretch, stay]
+
+    AnshThoughtEntry:
+      description: One of Ansh's thoughts. `aiWritten` is false for the built-in fallback.
+      type: object
+      additionalProperties: false
+      required: [at, action, say, aiWritten]
+      properties:
+        at:
+          type: integer
+        action:
+          $ref: '#/components/schemas/AnshAction'
+        targetId:
+          type: integer
+          description: The agent a `visit` walks to (an id on the board when the thought was had).
+        say:
+          type: string
+        aiWritten:
+          type: boolean
+
+    AnshBrainState:
+      description: >-
+        Ansh's brain: on or off, thinking right now, today's thought count against
+        the daily cap, and the recent thoughts (newest last). Sent on connect and
+        whenever any of it changes.
+      type: object
+      additionalProperties: false
+      required: [type, enabled, thinking, thoughtsToday, dailyCap, thoughts]
+      properties:
+        type:
+          const: anshBrainState
+        enabled:
+          type: boolean
+        thinking:
+          type: boolean
+        thoughtsToday:
+          type: integer
+        dailyCap:
+          type: integer
+        thoughts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnshThoughtEntry'
+
+    AnshThought:
+      description: Ansh just had a thought (the character walks and says it).
+      type: object
+      additionalProperties: false
+      required: [type, thought]
+      properties:
+        type:
+          const: anshThought
+        thought:
+          $ref: '#/components/schemas/AnshThoughtEntry'
 
     Report:
       description: A day's Manager report, in reply to requestReport. `exists` is false when none was written.
@@ -1847,6 +1977,20 @@ components:
         enabled:
           type: boolean
 
+    SetUsageMeterEnabled:
+      description: |
+        Install (true) or remove (false) the usage meter's status line in
+        ~/.claude/settings.json. Privileged. Never replaces a status line the
+        user configured. Answered with usageMeterStatus.
+      type: object
+      additionalProperties: false
+      required: [type, enabled]
+      properties:
+        type:
+          const: setUsageMeterEnabled
+        enabled:
+          type: boolean
+
     HooksConsentResponse:
       description: |
         The user's answer to `hooksConsentRequest` — an ABSOLUTE statement of
@@ -2102,6 +2246,28 @@ components:
       properties:
         type:
           const: writeReportNow
+
+    SetAnshBrainEnabled:
+      description: Turn Ansh's brain on or off. Privileged only.
+      type: object
+      additionalProperties: false
+      required: [type, enabled]
+      properties:
+        type:
+          const: setAnshBrainEnabled
+        enabled:
+          type: boolean
+
+    AskAnsh:
+      description: >-
+        Have Ansh think now, out of turn. Privileged only (it uses the Claude
+        subscription); still subject to the brain's own rate limit and daily cap.
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: askAnsh
 
     RequestTimeline:
       description: Ask for one agent's recent actions (server responds with agentTimeline). Allowed for read-only clients.

@@ -7,6 +7,7 @@ import type {
   HooksConsentRequest,
   WorkPhase,
 } from '../../../core/src/messages.js';
+import { handleAnshMessage } from '../ansh/anshStore.js';
 import { playBellSound } from '../celebrationSound.js';
 import { playDoneSound, playPermissionSound, setSoundEnabled } from '../notificationSound.js';
 import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingAgents.js';
@@ -373,6 +374,10 @@ export function useExtensionMessages(
       // Phase M task log: the Tasks board's store; a report for today sends
       // the Manager to Ansh's desk.
       if (handleTasksMessage(msg, { onReportReadyToday: () => os.startManagerVisit() })) return;
+
+      // Ansh's brain: his state for the thoughts panel; a new thought walks him
+      // (OfficeState.anshDo) and puts the line in his bubble.
+      if (handleAnshMessage(msg, { onThought: (thought) => os.anshDo(thought) })) return;
 
       if (msg.type === 'providerCapabilities') {
         setProviderCapabilities({

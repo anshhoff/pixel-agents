@@ -9,8 +9,6 @@ import {
   HOOK_API_PREFIX,
   MAX_HOOK_BODY_SIZE,
   SERVER_JSON_DIR,
-  SERVER_JSON_NAME,
-  SERVERS_DIR,
 } from '../../../../constants.js';
 import {
   APPROVALS_ENV,
@@ -21,10 +19,8 @@ import {
 } from '../../../../permissions/constants.js';
 import { approvalsSwitchedOff } from '../../../../permissions/killSwitch.js';
 import type { ServerConfig, ServerTarget } from '../../../../serverConfig.js';
-import { isServerConfig, isServerTarget } from '../../../../serverConfig.js';
+import { LEGACY_SERVER_JSON_PATH, readLegacyServer, readRegistry } from './serverRegistry.js';
 
-const SERVER_JSON = path.join(os.homedir(), SERVER_JSON_DIR, SERVER_JSON_NAME);
-const SERVERS_REGISTRY_DIR = path.join(os.homedir(), SERVER_JSON_DIR, SERVERS_DIR);
 const CONFIG_JSON = path.join(os.homedir(), SERVER_JSON_DIR, CONFIG_FILE_NAME);
 
 /**
@@ -162,58 +158,6 @@ export function shrinkHookPayload(data: Record<string, unknown>): Record<string,
   if (fitsInBody(payload)) return payload;
 
   return shrinkValue(payload, 0) as Record<string, unknown>;
-}
-
-/** True if a process with this PID is alive. Best-effort: a false positive on
- *  PID reuse just costs one extra, harmless, failed POST -- never a crash. */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Enumerate every live registry entry under ~/.pixel-agents/servers/, so the
- * event can fan out to each running server (VS Code embedded + a standalone
- * `npx pixel-agents`, or several of either, all at once). Entries whose owning
- * PID is no longer alive are skipped (the owning server prunes its own stale
- * file on next start; this script only needs to not POST to it). Returns an
- * empty array when the directory is absent/empty/unreadable -- the caller
- * falls back to the legacy single-target server.json (forward-compat with a
- * server that predates the registry).
- */
-function readRegistry(): ServerConfig[] {
-  let files: string[];
-  try {
-    files = fs.readdirSync(SERVERS_REGISTRY_DIR).filter((f) => f.endsWith('.json'));
-  } catch {
-    return [];
-  }
-
-  const live: ServerConfig[] = [];
-  for (const file of files) {
-    const filePath = path.join(SERVERS_REGISTRY_DIR, file);
-    try {
-      const entry = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as unknown;
-      if (!isServerConfig(entry)) {
-        hookDebug(`registry-skip reason=malformed file=${file} err=invalid-server-config`);
-        continue;
-      }
-      if (isProcessAlive(entry.pid)) {
-        live.push(entry);
-      } else {
-        hookDebug(`registry-skip reason=dead-pid file=${file} pid=${entry.pid}`);
-      }
-    } catch (e) {
-      hookDebug(
-        `registry-skip reason=malformed file=${file} err=${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-  return live;
 }
 
 /**
@@ -446,18 +390,14 @@ async function main(): Promise<void> {
   // Multi-server fan-out (D4): deliver to every live server in the registry.
   // Falls back to the single legacy server.json when the registry has no live
   // entries -- e.g. a server on disk that predates the registry (A1/A2).
-  const registry = readRegistry();
+  const registry = readRegistry(hookDebug);
   let servers: ServerTarget[] = registry;
   if (servers.length === 0) {
     try {
-      const legacy = JSON.parse(fs.readFileSync(SERVER_JSON, 'utf-8')) as unknown;
-      if (!isServerTarget(legacy)) {
-        throw new Error('invalid legacy server config');
-      }
-      servers = [legacy];
+      servers = [readLegacyServer()];
     } catch (e) {
       hookDebug(
-        `exit reason=no-server-json event=${eventName} sid=${sid} path=${SERVER_JSON} err=${e instanceof Error ? e.message : String(e)}`,
+        `exit reason=no-server-json event=${eventName} sid=${sid} path=${LEGACY_SERVER_JSON_PATH} err=${e instanceof Error ? e.message : String(e)}`,
       );
       process.exit(0);
     }

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { toMajorMinor } from './changelogData.js';
 import { AgentCardBar } from './components/AgentCardBar.js';
 import { AgentLookToggle } from './components/AgentLookToggle.js';
+import { AnshPanel } from './components/AnshPanel.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
@@ -43,6 +44,7 @@ import { InboxStripItems } from './inbox/InboxPanel.js';
 import { useInboxMessages } from './inbox/inboxStore.js';
 import { MobileShell } from './mobile/MobileShell.js';
 import { useMobileShell } from './mobile/useMobileShell.js';
+import { AnshBubbleOverlay } from './office/components/AnshBubbleOverlay.js';
 import { NpcOverlay } from './office/components/NpcOverlay.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
@@ -67,6 +69,7 @@ import { FIT_MARGINS_TV, TV_SAFE_AREA_PADDING } from './tvMode/constants.js';
 import { TvExitButton, TvModeButton } from './tvMode/TvControls.js';
 import { showsIn } from './tvMode/tvModeState.js';
 import { useTvAutoFit, useTvMode } from './tvMode/useTvMode.js';
+import { UsageMeterOverlay } from './usage/UsageMeterOverlay.js';
 
 // Game state lives outside React — updated imperatively by message handlers
 const officeStateRef = { current: null as OfficeState | null };
@@ -728,8 +731,24 @@ function App() {
             panRef={editor.panRef}
           />
 
+          {/* Ansh's brain: his latest thought, said in a bubble over his head. */}
+          <AnshBubbleOverlay
+            officeState={officeState}
+            containerRef={containerRef}
+            zoom={editor.zoom}
+            panRef={editor.panRef}
+          />
+
           {/* Useful signals: the notice board's lines, and the tapped character's timeline. */}
           <NoticeBoardOverlay
+            officeState={officeState}
+            containerRef={containerRef}
+            zoom={editor.zoom}
+            panRef={editor.panRef}
+            hidden={editor.isEditMode}
+          />
+          {/* The server room's wall display: subscription usage + reset times. */}
+          <UsageMeterOverlay
             officeState={officeState}
             containerRef={containerRef}
             zoom={editor.zoom}
@@ -1055,6 +1074,9 @@ function App() {
 
       {/* The Manager's Tasks board: a viewport overlay, so top level (see above). */}
       <TasksBoard fullScreen={isMobile} canWriteReport={!officeReadOnly} />
+
+      {/* Ansh's thoughts (a click on Ansh): a viewport overlay, so top level too. */}
+      <AnshPanel readOnly={officeReadOnly} />
 
       <ChangelogModal
         isOpen={isChangelogOpen}

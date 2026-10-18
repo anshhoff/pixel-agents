@@ -34,6 +34,8 @@ export type ServerMessage =
   | TaskUpdated
   | ReportReady
   | Report
+  | AnshBrainState
+  | AnshThought
   | AgentTrouble
   | AgentLoop
   | AgentTimeline
@@ -41,6 +43,8 @@ export type ServerMessage =
   | NoticeBoard
   | AgentLink
   | AgentLimit
+  | SubscriptionUsage
+  | UsageMeterStatus
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -100,9 +104,12 @@ export type ClientMessage =
   | RequestTasks
   | RequestReport
   | WriteReportNow
+  | SetAnshBrainEnabled
+  | AskAnsh
   | RequestTimeline
   | AnswerPermission
-  | RequestTimeReport;
+  | RequestTimeReport
+  | SetUsageMeterEnabled;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -333,6 +340,30 @@ export interface Report {
   writing?: boolean;
 }
 
+export interface AnshBrainState {
+  type: 'anshBrainState';
+  enabled: boolean;
+  thinking: boolean;
+  thoughtsToday: number;
+  dailyCap: number;
+  thoughts: AnshThoughtEntry[];
+}
+
+export interface AnshThoughtEntry {
+  at: number;
+  action: AnshAction;
+  targetId?: number;
+  say: string;
+  aiWritten: boolean;
+}
+
+export type AnshAction = 'visit' | 'chatManager' | 'stretch' | 'stay';
+
+export interface AnshThought {
+  type: 'anshThought';
+  thought: AnshThoughtEntry;
+}
+
 export interface AgentTrouble {
   type: 'agentTrouble';
   id: number;
@@ -419,6 +450,25 @@ export interface AgentLimit {
 }
 
 export type LimitReason = 'session' | 'weekly' | 'usage' | 'rate';
+
+export interface SubscriptionUsage {
+  type: 'subscriptionUsage';
+  fiveHour?: UsageWindow;
+  sevenDay?: UsageWindow;
+  updatedAt?: number;
+}
+
+export interface UsageWindow {
+  usedPercentage: number;
+  resetsAt: number;
+}
+
+export interface UsageMeterStatus {
+  type: 'usageMeterStatus';
+  state: UsageMeterState;
+}
+
+export type UsageMeterState = 'on' | 'off' | 'foreign' | 'unreadable';
 
 export interface LayoutLoaded {
   type: 'layoutLoaded';
@@ -822,6 +872,15 @@ export interface WriteReportNow {
   type: 'writeReportNow';
 }
 
+export interface SetAnshBrainEnabled {
+  type: 'setAnshBrainEnabled';
+  enabled: boolean;
+}
+
+export interface AskAnsh {
+  type: 'askAnsh';
+}
+
 export interface RequestTimeline {
   type: 'requestTimeline';
   id: number;
@@ -839,4 +898,9 @@ export interface RequestTimeReport {
   type: 'requestTimeReport';
   from: string;
   to: string;
+}
+
+export interface SetUsageMeterEnabled {
+  type: 'setUsageMeterEnabled';
+  enabled: boolean;
 }

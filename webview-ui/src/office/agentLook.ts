@@ -1,6 +1,6 @@
 /**
- * The agents' look: Clawd (Claude Code's orange mascot, the default) or the
- * classic chibi. Pure and DOM-free (storage is injected), so it unit-tests in
+ * The agents' look: the classic chibi (the default) or Clawd (Claude Code's
+ * orange mascot, opt-in). Pure and DOM-free (storage is injected), so it unit-tests in
  * the Node runner; the sprites themselves are in sprites/clawdSprites.ts.
  *
  * - NPCs (the greeter, Ansh, the Manager, the receptionist) keep the classic

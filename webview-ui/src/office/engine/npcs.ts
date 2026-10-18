@@ -30,7 +30,7 @@ import {
 import type { NpcPlaces, StandPlace } from '../anshOffice.js';
 import { NO_NPC_PLACES } from '../anshOffice.js';
 import type { Character, Seat, TileType as TileTypeVal, ZoneTarget } from '../types.js';
-import { CharacterState, TILE_SIZE } from '../types.js';
+import { CharacterState, Direction, TILE_SIZE } from '../types.js';
 import { ZoneLabel } from '../zones.js';
 import { createCharacter, isSettledAtZoneTarget, updateCharacter } from './characters.js';
 
@@ -45,6 +45,19 @@ export interface NpcWorld {
 }
 
 type VisitPhase = 'going' | 'staying' | 'returning';
+
+/** One of Ansh's errands (a thought's move, ansh/anshStore.ts): walk to a
+ *  spot, stay a while facing what he came for, walk back to his desk. */
+interface AnshErrand {
+  phase: VisitPhase;
+  timer: number;
+  staySec: number;
+  /** The tile he came for (an agent, the Manager): faced while he stays. */
+  lookAt: () => { col: number; row: number } | null;
+}
+
+/** One frame of an NPC's walk, with its own seat counted walkable. */
+type WalkStep = 'walking' | 'arrived' | 'unreachable';
 
 const seatTarget = (seat: Seat): ZoneTarget => ({
   zone: null,
@@ -93,12 +106,15 @@ export class OfficeNpcs {
   hovered: NpcKind | null = null;
   private readonly places: NpcPlaces;
   private readonly managerHome: ZoneTarget | null;
+  private readonly anshHome: ZoneTarget | null;
   private visit: { phase: VisitPhase; timer: number } | null = null;
+  private errand: AnshErrand | null = null;
 
   constructor(places: NpcPlaces = NO_NPC_PLACES) {
     this.places = places;
-    this.ansh = places.anshSeat
-      ? createNpc(ANSH_NPC_ID, ANSH_NPC_PALETTE, ANSH_NPC_HUE_SHIFT, seatTarget(places.anshSeat))
+    this.anshHome = places.anshSeat ? seatTarget(places.anshSeat) : null;
+    this.ansh = this.anshHome
+      ? createNpc(ANSH_NPC_ID, ANSH_NPC_PALETTE, ANSH_NPC_HUE_SHIFT, this.anshHome)
       : null;
     this.managerHome = places.managerSeat
       ? seatTarget(places.managerSeat)
@@ -149,8 +165,31 @@ export class OfficeNpcs {
     return true;
   }
 
+  /** Ansh is out of his chair on an errand (going, there, or coming back). */
+  get anshOut(): boolean {
+    return this.errand !== null;
+  }
+
+  /**
+   * A thought's move: Ansh walks to `spot`, stays `staySec` facing what
+   * `lookAt` returns, then walks back to his desk. A new errand replaces one
+   * under way (he sets off from wherever he is). False without an Ansh.
+   */
+  startAnshErrand(
+    spot: { col: number; row: number },
+    staySec: number,
+    lookAt: () => { col: number; row: number } | null,
+  ): boolean {
+    const ch = this.ansh;
+    if (!ch || !this.anshHome) return false;
+    this.errand = { phase: 'going', timer: 0, staySec, lookAt };
+    const facing = faceToward(spot, lookAt() ?? spot, ch.dir);
+    this.walkTo(ch, standTarget('npc:ansh-errand', { ...spot, facing }));
+    return true;
+  }
+
   update(dt: number, world: NpcWorld): void {
-    if (this.ansh) idleAnimate(this.ansh, dt);
+    this.updateAnsh(dt, world);
     const ch = this.manager;
     const home = this.managerHome;
     if (!ch || !home) return;
@@ -167,24 +206,15 @@ export class OfficeNpcs {
       }
       return;
     }
-    // Walking (there or back): the FSM's zone branch, with the Manager's own
-    // seat counted walkable (chairs are blocked to everyone else).
-    const own = this.places.managerSeat;
-    const ownKey = own ? `${own.seatCol},${own.seatRow}` : null;
-    const removed = ownKey !== null && world.blockedTiles.delete(ownKey);
-    try {
-      updateCharacter(ch, dt, world.walkableTiles, world.seats, world.tileMap, world.blockedTiles);
-    } finally {
-      if (removed && ownKey) world.blockedTiles.add(ownKey);
-    }
-    if (ch.zoneTarget?.unreachable) {
+    const step = stepWalk(ch, this.places.managerSeat, dt, world);
+    if (step === 'unreachable') {
       // No way there (or back): give up and sit back down.
       this.visit = null;
       ch.zoneTarget = null;
       placeAt(ch, home);
       return;
     }
-    if (!isSettledAtZoneTarget(ch)) return;
+    if (step === 'walking') return;
     if (visit.phase === 'going') {
       visit.phase = 'staying';
       visit.timer = 0;
@@ -192,6 +222,46 @@ export class OfficeNpcs {
     }
     // Back home.
     this.visit = null;
+    ch.zoneTarget = null;
+    placeAt(ch, home);
+  }
+
+  private updateAnsh(dt: number, world: NpcWorld): void {
+    const ch = this.ansh;
+    const home = this.anshHome;
+    if (!ch) return;
+    const errand = this.errand;
+    if (!errand || !home) {
+      idleAnimate(ch, dt);
+      return;
+    }
+    if (errand.phase === 'staying') {
+      // Keep facing what he came for (an agent may have moved).
+      const at = errand.lookAt();
+      if (at) ch.dir = faceToward({ col: ch.tileCol, row: ch.tileRow }, at, ch.dir);
+      errand.timer += dt;
+      if (errand.timer >= errand.staySec) {
+        errand.phase = 'returning';
+        this.walkTo(ch, home);
+      }
+      return;
+    }
+    const step = stepWalk(ch, this.places.anshSeat, dt, world);
+    if (step === 'unreachable') {
+      // No way there (or back): he stays put at his desk.
+      this.errand = null;
+      ch.zoneTarget = null;
+      placeAt(ch, home);
+      return;
+    }
+    if (step === 'walking') return;
+    if (errand.phase === 'going') {
+      errand.phase = 'staying';
+      errand.timer = 0;
+      return;
+    }
+    // Back at his desk.
+    this.errand = null;
     ch.zoneTarget = null;
     placeAt(ch, home);
   }
@@ -233,6 +303,35 @@ export class OfficeNpcs {
     ch.frame = 0;
     ch.frameTimer = 0;
   }
+}
+
+/**
+ * One frame of an NPC's walk under the FSM's zone branch, with its own seat
+ * counted walkable (chairs are blocked to everyone else).
+ */
+function stepWalk(ch: Character, ownSeat: Seat | null, dt: number, world: NpcWorld): WalkStep {
+  const ownKey = ownSeat ? `${ownSeat.seatCol},${ownSeat.seatRow}` : null;
+  const removed = ownKey !== null && world.blockedTiles.delete(ownKey);
+  try {
+    updateCharacter(ch, dt, world.walkableTiles, world.seats, world.tileMap, world.blockedTiles);
+  } finally {
+    if (removed && ownKey) world.blockedTiles.add(ownKey);
+  }
+  if (ch.zoneTarget?.unreachable) return 'unreachable';
+  return isSettledAtZoneTarget(ch) ? 'arrived' : 'walking';
+}
+
+/** The direction from one tile to look at another (the larger axis wins). */
+export function faceToward(
+  from: { col: number; row: number },
+  to: { col: number; row: number },
+  fallback: Direction,
+): Direction {
+  const dc = to.col - from.col;
+  const dr = to.row - from.row;
+  if (dc === 0 && dr === 0) return fallback;
+  if (Math.abs(dc) >= Math.abs(dr)) return dc > 0 ? Direction.RIGHT : Direction.LEFT;
+  return dr > 0 ? Direction.DOWN : Direction.UP;
 }
 
 /** Seated (or standing) at home: a slow two-frame loop, so they look alive. */

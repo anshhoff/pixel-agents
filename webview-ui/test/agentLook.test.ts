@@ -71,26 +71,26 @@ afterEach(() => {
 });
 
 describe('the Agent Look setting', () => {
-  it('defaults to Clawd', () => {
-    expect(AGENT_LOOK_DEFAULT).toBe('clawd');
-    expect(getAgentLook()).toBe('clawd');
-    expect(loadAgentLook(memoryStorage())).toBe('clawd');
-    expect(loadAgentLook(null)).toBe('clawd');
+  it('defaults to Classic', () => {
+    expect(AGENT_LOOK_DEFAULT).toBe('classic');
+    expect(getAgentLook()).toBe('classic');
+    expect(loadAgentLook(memoryStorage())).toBe('classic');
+    expect(loadAgentLook(null)).toBe('classic');
   });
 
   it('reads a stored look and ignores garbage', () => {
-    expect(loadAgentLook(memoryStorage({ [AGENT_LOOK_STORAGE_KEY]: 'classic' }))).toBe('classic');
-    expect(loadAgentLook(memoryStorage({ [AGENT_LOOK_STORAGE_KEY]: 'chibi?' }))).toBe('clawd');
+    expect(loadAgentLook(memoryStorage({ [AGENT_LOOK_STORAGE_KEY]: 'clawd' }))).toBe('clawd');
+    expect(loadAgentLook(memoryStorage({ [AGENT_LOOK_STORAGE_KEY]: 'chibi?' }))).toBe('classic');
     expect(isAgentLook('classic')).toBe(true);
     expect(isAgentLook('CLAWD')).toBe(false);
   });
 
   it('persists per browser, through the storage it is given', () => {
     const storage = memoryStorage();
-    setAgentLook('classic', storage);
-    expect(storage.map.get(AGENT_LOOK_STORAGE_KEY)).toBe('classic');
-    expect(getAgentLook()).toBe('classic');
-    expect(initAgentLook(storage)).toBe('classic');
+    setAgentLook('clawd', storage);
+    expect(storage.map.get(AGENT_LOOK_STORAGE_KEY)).toBe('clawd');
+    expect(getAgentLook()).toBe('clawd');
+    expect(initAgentLook(storage)).toBe('clawd');
   });
 
   it('survives a storage that throws (private mode, quota)', () => {
@@ -102,18 +102,18 @@ describe('the Agent Look setting', () => {
         throw new Error('nope');
       },
     };
-    expect(loadAgentLook(broken)).toBe('clawd');
-    expect(() => saveAgentLook('classic', broken)).not.toThrow();
+    expect(loadAgentLook(broken)).toBe('classic');
+    expect(() => saveAgentLook('clawd', broken)).not.toThrow();
   });
 
   it('tells its subscribers once per change', () => {
     let calls = 0;
     const off = subscribeAgentLook(() => calls++);
-    setAgentLook('classic', null);
-    setAgentLook('classic', null); // no change, no call
     setAgentLook('clawd', null);
-    off();
+    setAgentLook('clawd', null); // no change, no call
     setAgentLook('classic', null);
+    off();
+    setAgentLook('clawd', null);
     expect(calls).toBe(2);
   });
 });
@@ -131,12 +131,12 @@ describe('who is drawn how', () => {
       expect(lookOf(npc)).toBe('classic');
     }
     expect(isNpcCharacter(agent())).toBe(false);
+    expect(lookOf(agent())).toBe('classic');
+
+    setAgentLook('clawd', null);
     expect(lookOf(agent())).toBe('clawd');
     expect(lookOf(agent({ id: -1, isSubagent: true }))).toBe('clawd');
-
-    setAgentLook('classic', null);
-    expect(lookOf(agent())).toBe('classic');
-    expect(lookOf(npcs[0])).toBe('classic');
+    for (const npc of npcs) expect(lookOf(npc)).toBe('classic');
   });
 });
 
@@ -220,6 +220,7 @@ describe('the geometry per look', () => {
   });
 
   it('is the classic geometry for NPCs even under the Clawd look', () => {
+    setAgentLook('clawd', null);
     expect(metricsOf(agent({ id: ANSH_NPC_ID }))).toBe(lookMetrics('classic'));
     expect(metricsOf(agent())).toBe(lookMetrics('clawd'));
   });

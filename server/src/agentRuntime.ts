@@ -16,6 +16,7 @@ import type { HookProvider } from '../../core/src/provider.js';
 import { createAgentState } from './agentState.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { PhoneAlerts, type PhoneAlertsOptions } from './alerts.js';
+import { AnshBrain } from './ansh/anshBrain.js';
 import { REMOTE_AGENT_TTL_MS, REMOTE_EXPIRY_CHECK_INTERVAL_MS } from './constants.js';
 import { DismissalTracker } from './dismissalTracker.js';
 import {
@@ -54,12 +55,20 @@ import {
 } from './localSessions.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { PathSet, pathsMatch } from './pathKey.js';
-import { ProgressTracker, type ProgressTrackerOptions } from './progress/progressTracker.js';
+import {
+  localDateKey,
+  ProgressTracker,
+  type ProgressTrackerOptions,
+} from './progress/progressTracker.js';
 import { SessionRouter } from './sessionRouter.js';
 import { getSignalsHub, setSignalsHub } from './signals/registry.js';
 import { SignalsHub, type SignalsHubOptions } from './signals/signalsHub.js';
 import { SubagentWatch } from './subagentWatch.js';
-import { ManagerReports, type ManagerReportsOptions } from './tasks/managerReports.js';
+import {
+  buildReportData,
+  ManagerReports,
+  type ManagerReportsOptions,
+} from './tasks/managerReports.js';
 import {
   defaultManagerDataDir,
   getTaskLedger,
@@ -77,6 +86,8 @@ import {
 } from './transcriptParser.js';
 import { readLatestAiTitle } from './transcriptTitle.js';
 import type { AgentState } from './types.js';
+import type { UsageMeterOptions } from './usage/usageMeter.js';
+import { getUsageMeter, setUsageMeter, UsageMeter } from './usage/usageMeter.js';
 
 /** Callbacks that adapters register for platform-specific behavior. */
 export interface RuntimeLifecycleCallbacks {
@@ -108,6 +119,9 @@ export interface AgentRuntimeOptions {
   signals?: SignalsHubOptions;
   /** Clock and transcript reader for the inbox tracker (tests). */
   inbox?: InboxTrackerOptions;
+  /** The usage meter's saved-report file and clock. Default:
+   *  ~/.pixel-agents/usage.json with a StateAdapter, in memory without one. */
+  usage?: UsageMeterOptions;
 }
 
 export class AgentRuntime {
@@ -151,10 +165,15 @@ export class AgentRuntime {
   /** The Manager's daily report (tasks/managerReports.ts). Scheduled only once
    *  started -- the standalone CLI does. */
   readonly reports: ManagerReports;
+  /** Ansh's brain: the user's character thinks about the office and comments
+   *  (ansh/anshBrain.ts). Looks only once started -- the standalone CLI does. */
+  readonly ansh: AnshBrain;
   /** Needs-you inbox: Open-in-Claude links + usage-limit pauses (inbox/). */
   readonly inbox: InboxTracker;
   /** Week wall totals + weather (see fun/funServices.ts). Weather polls only once started. */
   readonly fun: FunServices;
+  /** The subscription's 5-hour / 7-day usage for the server room's meter (usage/). */
+  readonly usage: UsageMeter;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
 
@@ -201,8 +220,37 @@ export class AgentRuntime {
       ...manager,
       dataDir: managerDataDir,
     });
+    this.ansh = new AnshBrain(
+      store,
+      {
+        waitingSinceOf: (id) => this.progress.waitingSinceOf(id),
+        failuresOf: (id) => {
+          for (const m of this.signals.snapshot()) {
+            if (m.type === 'agentTrouble' && m.id === id && typeof m.failures === 'number') {
+              return m.failures;
+            }
+          }
+          return 0;
+        },
+        isSleeping: (id) => this.localSessions.isSleeping(id),
+        todayTasks: () => {
+          const date = localDateKey((manager?.now ?? Date.now)());
+          const { done, open, waiting } = buildReportData(date, this.tasks.tasksFor(date)).totals;
+          return { done, open, waiting };
+        },
+        todayStats: () => {
+          for (const m of this.progress.snapshot()) {
+            if (m.type === 'dailyStats') return { prs: m.prs.length, pushes: m.pushes.length };
+          }
+          return { prs: 0, pushes: 0 };
+        },
+      },
+      { ...manager, dataDir: managerDataDir },
+    );
     this.inbox = new InboxTracker(store, options.inbox);
     setInboxTracker(this.inbox);
+    this.usage = new UsageMeter(store, options.usage ?? (store.getAdapter() ? {} : { file: null }));
+    setUsageMeter(this.usage);
 
     // Wire module-level dependencies
     setDismissalTracker(this.dismissalTracker);
@@ -511,6 +559,11 @@ export class AgentRuntime {
     this.reports.start();
   }
 
+  /** Start Ansh's brain (standalone only). */
+  startAnshBrain(): void {
+    this.ansh.start();
+  }
+
   /** Start polling the weather for the office windows (standalone only; needs the network). */
   startWeather(): void {
     this.fun.weather.start();
@@ -798,6 +851,7 @@ export class AgentRuntime {
     if (getLocalSessionWatcher() === this.localSessions) setLocalSessionWatcher(null);
     // Also before the removals: shutting down ends no session, so it closes no task.
     this.reports.dispose();
+    this.ansh.dispose();
     this.tasks.dispose();
     if (getTaskLedger() === this.tasks) setTaskLedger(null);
     this.alerts.dispose();
@@ -811,6 +865,8 @@ export class AgentRuntime {
     if (getInboxTracker() === this.inbox) setInboxTracker(null);
     this.fun.dispose();
     if (getFunServices() === this.fun) setFunServices(null);
+    this.usage.dispose();
+    if (getUsageMeter() === this.usage) setUsageMeter(null);
 
     if (this.projectScanTimer.current) {
       clearInterval(this.projectScanTimer.current);

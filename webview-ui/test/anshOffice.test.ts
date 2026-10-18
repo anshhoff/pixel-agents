@@ -11,8 +11,12 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
+import type { AnshThoughtEntry } from '../../core/src/messages.js';
 import {
+  ANSH_CHAT_STAY_SEC,
   ANSH_NPC_ID,
+  ANSH_STRETCH_RADIUS_TILES,
+  ANSH_VISIT_STAY_SEC,
   KNOCK_BOB_PX,
   KNOCK_INTERVAL_SEC,
   MANAGER_NPC_ID,
@@ -368,5 +372,83 @@ describe('NPCs', () => {
     expect(standing.managerStand).toMatchObject({ col: 5, row: 5 });
     expect(standing.anshSeat).toBeNull();
     expect(standing.visitSpot).toMatchObject({ col: 0, row: 0 });
+  });
+});
+
+describe('Ansh’s thoughts, acted out', () => {
+  const thought = (over: Partial<AnshThoughtEntry>): AnshThoughtEntry => ({
+    at: 0,
+    action: 'stay',
+    say: 'Hm.',
+    aiWritten: true,
+    ...over,
+  });
+  const dist = (a: Character, b: { col: number; row: number }) =>
+    Math.abs(a.tileCol - b.col) + Math.abs(a.tileRow - b.row);
+  /** Run until Ansh stands still away from his chair (or fail after 20 s). */
+  function untilArrived(os: OfficeState): Character {
+    const a = os.npcs.ansh!;
+    let t = 0;
+    while (!(a.state === CharacterState.IDLE && !a.path.length && os.npcs.anshOut)) {
+      run(os, 0.1);
+      t += 0.1;
+      expect(t).toBeLessThan(20);
+    }
+    return a;
+  }
+
+  it('visit: walks out of his room to the agent, faces it, stays, and walks back to his desk', () => {
+    const os = office();
+    const agent = agentAt(os, 1, 'd1');
+    expect(os.anshDo(thought({ action: 'visit', targetId: 1 }))).toBe(true);
+    const a = untilArrived(os);
+    expect(dist(a, { col: agent.tileCol, row: agent.tileRow })).toBeLessThanOrEqual(2);
+    const dc = agent.tileCol - a.tileCol;
+    const dr = agent.tileRow - a.tileRow;
+    const facing =
+      Math.abs(dc) >= Math.abs(dr)
+        ? dc > 0
+          ? Direction.RIGHT
+          : Direction.LEFT
+        : dr > 0
+          ? Direction.DOWN
+          : Direction.UP;
+    expect(a.dir).toBe(facing);
+    run(os, ANSH_VISIT_STAY_SEC - 0.5);
+    expect(os.npcs.anshOut).toBe(true);
+    run(os, 20);
+    expect(at(a)).toEqual([3, 3]);
+    expect(a.state).toBe(CharacterState.TYPE);
+    expect(os.npcs.anshOut).toBe(false);
+    // His chair stayed his throughout; the agent was never touched.
+    expect(os.seats.get('ansh')!.assigned).toBe(true);
+    expect(agent.seatId).toBe('d1');
+  });
+
+  it('chatManager: goes over to the Manager and back', () => {
+    const os = office();
+    expect(os.anshDo(thought({ action: 'chatManager' }))).toBe(true);
+    const a = untilArrived(os);
+    expect(dist(a, { col: 9, row: 4 })).toBeLessThanOrEqual(2);
+    run(os, ANSH_CHAT_STAY_SEC + 20);
+    expect(at(a)).toEqual([3, 3]);
+  });
+
+  it('stretch: a short walk nearby and back', () => {
+    const os = office();
+    expect(os.anshDo(thought({ action: 'stretch' }), () => 0.5)).toBe(true);
+    const a = untilArrived(os);
+    expect(dist(a, { col: 3, row: 3 })).toBeLessThanOrEqual(ANSH_STRETCH_RADIUS_TILES + 1);
+    run(os, 30);
+    expect(at(a)).toEqual([3, 3]);
+  });
+
+  it('stays seated for `stay`, a target no longer on the board, or no Ansh at all', () => {
+    const os = office();
+    expect(os.anshDo(thought({ action: 'stay' }))).toBe(false);
+    expect(os.anshDo(thought({ action: 'visit', targetId: 42 }))).toBe(false);
+    expect(os.npcs.anshOut).toBe(false);
+    expect(at(os.npcs.ansh!)).toEqual([3, 3]);
+    expect(office(MAP_WITHOUT_ANSH).anshDo(thought({ action: 'chatManager' }))).toBe(false);
   });
 });

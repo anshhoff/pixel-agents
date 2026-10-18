@@ -173,6 +173,15 @@ export const HOOK_EVENT_BUFFER_MS = 5_000;
  *  the agent is cleaned up instead of staying as a zombie with pendingClear forever. */
 export const SESSION_END_GRACE_MS = 2000;
 export const MAX_HOOK_BODY_SIZE = 65_536; // 64KB
+
+// ── Subscription usage meter (usage/usageMeter.ts) ──────────
+/** Bearer-authenticated ingress for the status line script's usage reports. */
+export const USAGE_API_PATH = '/api/usage';
+/** The last usage report, under ~/.pixel-agents, so a restarted server still
+ *  shows the meter before Claude Code's next status line refresh. */
+export const USAGE_FILE_NAME = 'usage.json';
+/** How long the status line script waits on each server before giving up. */
+export const USAGE_POST_TIMEOUT_MS = 1000;
 /** A remote (relay-ingested) agent silent this long is removed: a sleeping
  *  laptop or a killed cloud VM never sends SessionEnd. */
 export const REMOTE_AGENT_TTL_MS = 3 * 60 * 60 * 1000;
@@ -296,6 +305,37 @@ export const MANAGER_STUCK_ACTIVE_MINUTES = 60;
 export const MANAGER_REPORT_ADDRESSEE = 'Ansh';
 /** The report run is asked to stay under this many words. */
 export const MANAGER_REPORT_MAX_WORDS = 250;
+
+// ── Ansh's brain (ansh/anshBrain.ts) ─────────────────────────
+/** Subdirectory of ~/.pixel-agents holding the brain's state.json (on/off,
+ *  today's count, recent thoughts) and claude's working dir for its runs. */
+export const ANSH_DIR_NAME = 'ansh';
+export const ANSH_STATE_FILE_NAME = 'state.json';
+/** How often the office is looked at for something worth a thought. A look
+ *  that finds nothing new costs nothing: claude runs only on a change. */
+export const ANSH_CHECK_INTERVAL_MS = 20_000;
+/** At least this long between two automatic thoughts. */
+export const ANSH_MIN_GAP_MS = 5 * 60_000;
+/** "Ask Ansh" may cut in, but no sooner than this after the last thought. */
+export const ANSH_ASK_MIN_GAP_MS = 30_000;
+/** Thoughts per local day, automatic and asked together. Past it Ansh stays quiet. */
+export const ANSH_DAILY_CAP = 40;
+/** Recent thoughts kept (on disk and in the brain-state message). */
+export const ANSH_RECENT_THOUGHTS = 30;
+/** A thought's run is cut short after this long (the fallback thought is used). */
+export const ANSH_CLAUDE_TIMEOUT_MS = 60_000;
+/** Cap on a thought's stdout. */
+export const ANSH_CLAUDE_MAX_BUFFER = 64 * 1024;
+/** Longest line Ansh says (characters). */
+export const ANSH_SAY_MAX_CHARS = 120;
+/** A wait this long (minutes) is "long": it counts as news once it crosses. */
+export const ANSH_LONG_WAIT_MINUTES = 10;
+/** Task titles and status text are cut to this many characters in the prompt. */
+export const ANSH_PROMPT_TEXT_MAX = 80;
+/** Environment variable that keeps claude from ever being run for Ansh's
+ *  thoughts (set it to one of LOCAL_SESSIONS_OFF_VALUES): the built-in fallback
+ *  thoughts are used instead. PIXEL_AGENTS_MANAGER=off does the same. */
+export const ANSH_BRAIN_ENV = 'PIXEL_AGENTS_ANSH_BRAIN';
 /** ntfy headers for the daily-report push (ASCII only: HTTP header values). */
 export const REPORT_NOTIFICATION_TITLE = 'Daily report';
 export const REPORT_NOTIFICATION_TAGS = 'clipboard';

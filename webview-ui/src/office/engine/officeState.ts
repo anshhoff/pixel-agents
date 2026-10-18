@@ -1,6 +1,10 @@
-import type { DailyStats } from '../../../../core/src/messages.js';
+import type { AnshThoughtEntry, DailyStats } from '../../../../core/src/messages.js';
 import { pickDiversePalette } from '../../../../core/src/paletteUtils.js';
 import {
+  ANSH_CHAT_STAY_SEC,
+  ANSH_STRETCH_RADIUS_TILES,
+  ANSH_STRETCH_STAY_SEC,
+  ANSH_VISIT_STAY_SEC,
   ASHTRAY_BUTT_SLOTS,
   AUTO_ON_FACING_DEPTH,
   AUTO_ON_SIDE_DEPTH,
@@ -2168,6 +2172,53 @@ export class OfficeState {
   /** Report time: the Manager walks into Ansh's office and back. */
   startManagerVisit(): boolean {
     return this.npcs.startManagerVisit();
+  }
+
+  /**
+   * One of Ansh's thoughts, acted out: walk over to the agent (`visit`), to
+   * the Manager (`chatManager`) or somewhere nearby (`stretch`), stay a
+   * moment, walk back. `stay` (or a target no longer here) keeps him seated;
+   * the line shows in his bubble either way. Moves only: nothing is done to
+   * an agent.
+   */
+  anshDo(thought: AnshThoughtEntry, random: () => number = Math.random): boolean {
+    const ansh = this.npcs.ansh;
+    if (!ansh) return false;
+    const tileOf = (ch: Character | null | undefined) =>
+      ch ? { col: ch.tileCol, row: ch.tileRow } : null;
+    let near: { col: number; row: number } | null = null;
+    let lookAt: () => { col: number; row: number } | null = () => null;
+    let staySec = ANSH_VISIT_STAY_SEC;
+    switch (thought.action) {
+      case 'visit': {
+        const id = thought.targetId;
+        if (id === undefined || !this.characters.has(id)) return false;
+        lookAt = () => tileOf(this.characters.get(id));
+        near = lookAt();
+        break;
+      }
+      case 'chatManager':
+        lookAt = () => tileOf(this.npcs.manager);
+        near = lookAt();
+        staySec = ANSH_CHAT_STAY_SEC;
+        break;
+      case 'stretch': {
+        const r = ANSH_STRETCH_RADIUS_TILES;
+        const around = this.walkableTiles.filter(
+          (t) => Math.abs(t.col - ansh.tileCol) + Math.abs(t.row - ansh.tileRow) <= r,
+        );
+        if (around.length === 0) return false;
+        near = around[Math.floor(random() * around.length)];
+        staySec = ANSH_STRETCH_STAY_SEC;
+        break;
+      }
+      case 'stay':
+        return false;
+    }
+    if (!near) return false;
+    const spot = this.closestFreeWalkableTile(near.col, near.row);
+    if (!spot) return false;
+    return this.npcs.startAnshErrand(spot, staySec, lookAt);
   }
 
   private buildNpcs(): OfficeNpcs {

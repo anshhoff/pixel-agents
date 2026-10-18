@@ -9,6 +9,11 @@
 /** Output filename after esbuild compiles claude-hook.ts to CJS (source is .ts, output is .js) */
 export const CLAUDE_HOOK_SCRIPT_NAME = 'claude-hook.js';
 
+/** Output filename of the status line script (hooks/claude-statusline.ts): the
+ *  `statusLine` command the usage meter installs. Claude Code passes it the
+ *  subscription's 5-hour and 7-day usage, which nothing else carries. */
+export const CLAUDE_STATUSLINE_SCRIPT_NAME = 'claude-statusline.js';
+
 /** The script name we shipped before the rename to claude-hook.js. Still
  *  recognized as ours so a very old install can be migrated or removed. */
 export const LEGACY_HOOK_SCRIPT_NAME = 'pixel-agents-hook.js';

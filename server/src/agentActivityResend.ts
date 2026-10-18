@@ -6,6 +6,7 @@ import { getSignalsHub } from './signals/registry.js';
 import { getTaskLedger } from './tasks/taskLedger.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { getProgressTracker } from './transcriptParser.js';
+import { getUsageMeter } from './usage/usageMeter.js';
 
 /**
  * Replay an agent's active state to a connecting client.
@@ -135,6 +136,15 @@ export function resendAgentActivity(
   const sleep = getLocalSessionWatcher();
   if (sleep?.tracks(store)) {
     for (const message of sleep.snapshot()) {
+      send({ ...message });
+    }
+  }
+
+  // The server room's usage meter: the subscription's 5-hour / 7-day usage,
+  // once a status line has reported it.
+  const usage = getUsageMeter();
+  if (usage?.tracks(store)) {
+    for (const message of usage.snapshot()) {
       send({ ...message });
     }
   }

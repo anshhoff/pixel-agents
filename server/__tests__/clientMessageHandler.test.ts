@@ -1271,6 +1271,8 @@ describe('clientMessageHandler: read-only (untokened) clients', () => {
       { type: 'requestDirectorySuggestions' },
       { type: 'requestDiagnostics' },
       { type: 'writeReportNow' },
+      { type: 'setAnshBrainEnabled', enabled: false },
+      { type: 'askAnsh' },
     ]) {
       handleClientMessage(msg, (m) => sent.push(m), untokened);
     }
@@ -1430,6 +1432,22 @@ describe("clientMessageHandler: the Manager's tasks and reports", () => {
     dispatch({ type: 'writeReportNow' }, true);
     await settle();
     expect(runs).toBe(1);
+  });
+
+  it("refuses Ansh's controls to a read-only client and runs them for a privileged one", async () => {
+    runtime.startAnshBrain();
+    workOnSomething();
+    dispatch({ type: 'askAnsh' });
+    dispatch({ type: 'setAnshBrainEnabled', enabled: false });
+    await settle();
+    expect(runs).toBe(0);
+    expect(runtime.ansh.stateMessage().enabled).toBe(true);
+
+    dispatch({ type: 'askAnsh' }, true);
+    await settle();
+    expect(runs).toBe(1);
+    dispatch({ type: 'setAnshBrainEnabled', enabled: false }, true);
+    expect(runtime.ansh.stateMessage().enabled).toBe(false);
   });
 
   it('answers with an empty day and no report without a runtime', () => {

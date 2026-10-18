@@ -510,7 +510,9 @@ export const COFFEE_CUP_COLOR = '#f4f1ea';
 export const COFFEE_CUP_COFFEE_COLOR = '#6b3e26';
 /** Receptionist: a non-agent NPC behind the Entrance's RECEPTION_DESK who
  *  waves (2 frames: arm up, then arm out with a 1 px bob) as an agent walks in. */
-export const RECEPTIONIST_ID = -1_000_000_001;
+/** Its own reserved id: it once shared ANSH_NPC_ID, so the receptionist was drawn
+ *  and recognized as Ansh. Every reserved NPC id must be distinct. */
+export const RECEPTIONIST_ID = -1_000_000_003;
 export const RECEPTION_DESK_TYPE_PREFIX = 'RECEPTION_DESK';
 export const RECEPTIONIST_PALETTE = 1;
 export const RECEPTIONIST_WAVE_SEC = 1.5;
@@ -551,6 +553,13 @@ export const MANAGER_NPC_HUE_SHIFT = 0;
 /** Hover labels. */
 export const ANSH_NPC_LABEL = 'Ansh';
 export const MANAGER_NPC_LABEL = '📋 Manager';
+/** Ansh's brain (ansh/anshStore.ts, engine/npcs.ts): how long he stays where a
+ *  thought took him, how far a stretch goes, and how long his line shows. */
+export const ANSH_VISIT_STAY_SEC = 6;
+export const ANSH_CHAT_STAY_SEC = 8;
+export const ANSH_STRETCH_STAY_SEC = 3;
+export const ANSH_STRETCH_RADIUS_TILES = 6;
+export const ANSH_BUBBLE_MS = 9_000;
 /** NPCs at their desks flip between two frames this often (slower than typing). */
 export const NPC_IDLE_FRAME_SEC = 0.6;
 /** On a report for today, the Manager stands by Ansh's desk this long. */
@@ -623,12 +632,12 @@ export const TEAM_LEAD_COLOR = '#ffd700';
 export const TEAM_ROLE_COLOR = '#66aaff';
 
 // ── Agent look: Clawd (office/agentLook.ts, office/sprites/clawdSprites.ts) ──
-// Agents (sessions, sub-agents, teammates) are drawn as Clawds — Claude Code's
-// orange mascot — unless the view setting says Classic. NPCs (Ansh, the
-// Manager, the receptionist, the greeter) keep the chibi art either way.
+// Agents (sessions, sub-agents, teammates) are drawn as the classic chibis
+// unless the view setting opts into Clawds — Claude Code's orange mascot. NPCs
+// (Ansh, the Manager, the receptionist, the greeter) keep the chibi art either way.
 /** The setting is a view preference, per browser: localStorage, never the server. */
 export const AGENT_LOOK_STORAGE_KEY = 'pixel-agents.agentLook';
-export const AGENT_LOOK_DEFAULT = 'clawd';
+export const AGENT_LOOK_DEFAULT = 'classic';
 /** The generated sheet's palette (scripts/generate-clawd-sprites.mjs). The eye
  *  colour is unique in the sheet: the blink and the glasses find the eyes by it. */
 export const CLAWD_BODY_COLOR = '#D97757';
@@ -1019,3 +1028,22 @@ export const FUN_DIM_PULSE_COLOR = '#000000';
 export const FUN_BANNER_BG = 'rgba(30, 30, 46, 0.9)';
 export const FUN_BANNER_BORDER_COLOR = '#f0cc58';
 export const FUN_BANNER_TEXT_COLOR = '#fff1e8';
+
+// ── Subscription usage meter (server room wall display, see src/usage/) ──
+/** The display's height, in sprite px: two 10 px rows (it overhangs the wall
+ *  above the racks a little, for text that stays readable zoomed out). */
+export const USAGE_METER_HEIGHT_SPRITE_PX = 20;
+/** Widest the display grows, in tiles (a wide server room keeps a panel). */
+export const USAGE_METER_MAX_WIDTH_TILES = 8;
+/** At or above this % used, the bar turns amber... */
+export const USAGE_METER_WARN_PERCENT = 60;
+/** ...and at or above this, red. */
+export const USAGE_METER_HIGH_PERCENT = 85;
+export const USAGE_METER_BG = '#10141c';
+export const USAGE_METER_FRAME = '#3a4a5c';
+export const USAGE_METER_TRACK = '#232c38';
+export const USAGE_METER_OK = '#5fc9b0';
+export const USAGE_METER_WARN = '#f0cc58';
+export const USAGE_METER_HIGH = '#e05a4f';
+export const USAGE_METER_TEXT = '#d8f5ec';
+export const USAGE_METER_DIM_TEXT = '#7d8b99';

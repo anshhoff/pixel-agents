@@ -10,6 +10,7 @@ import type {
   AssetCache,
   ReloadAssetsSideEffect,
   SetHooksEnabledSideEffect,
+  SetUsageMeterEnabledSideEffect,
 } from './clientMessageHandler.js';
 import {
   SERVER_JSON_DIR,
@@ -73,6 +74,7 @@ export class PixelAgentsServer {
     assetCache?: AssetCache;
     onSetHooksEnabled?: SetHooksEnabledSideEffect;
     onReloadAssets?: ReloadAssetsSideEffect;
+    onSetUsageMeterEnabled?: SetUsageMeterEnabledSideEffect;
     ptyManager?: PtySessionManager;
     /** Extra privileged Host names (standalone; see wsAuth.privilegedHostnames). */
     allowedHosts?: readonly string[];
@@ -145,6 +147,7 @@ export class PixelAgentsServer {
       onHookEvent: (providerId, event) => this.callback?.(providerId, event),
       onSetHooksEnabled: options?.onSetHooksEnabled,
       onReloadAssets: options?.onReloadAssets,
+      onSetUsageMeterEnabled: options?.onSetUsageMeterEnabled,
       ptyManager: options?.ptyManager,
       allowedHosts: standalone?.allowedHosts,
       approvals: options?.approvals,

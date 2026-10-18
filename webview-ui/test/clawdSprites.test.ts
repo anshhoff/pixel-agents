@@ -12,9 +12,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PNG } from 'pngjs';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  AGENT_LOOK_DEFAULT,
   ANSH_NPC_ID,
   CHARACTER_SITTING_OFFSET_PX,
   CLAWD_BODY_COLOR,
@@ -27,6 +28,7 @@ import {
 import { CLAWD_ACCESSORIES, clawdIdentity, setAgentLook } from '../src/office/agentLook.js';
 import { getCharacterSprite } from '../src/office/engine/characters.js';
 import { characterSpritesFor } from '../src/office/sprites/agentSprites.js';
+import { getAnshSprites } from '../src/office/sprites/anshSprites.js';
 import sheetJson from '../src/office/sprites/clawd-sheet.json';
 import type { SheetDirection } from '../src/office/sprites/clawdSprites.js';
 import {
@@ -296,7 +298,8 @@ describe('who gets which art', () => {
     };
     setCharacterTemplates([chibi(CONFETTI_COLORS[0]), chibi(CONFETTI_COLORS[1])]);
   });
-  afterEach(() => setAgentLook('clawd', null));
+  beforeEach(() => setAgentLook('clawd', null));
+  afterEach(() => setAgentLook(AGENT_LOOK_DEFAULT, null));
 
   const subject = (over: Partial<Character> = {}) => ({
     id: 3,
@@ -307,7 +310,7 @@ describe('who gets which art', () => {
     ...over,
   });
 
-  it('draws agents as Clawds by default and as chibis under Classic', () => {
+  it('draws agents as Clawds under the Clawd look and as chibis under Classic', () => {
     const ch = subject();
     const id = clawdIdentity(ch);
     expect(characterSpritesFor(ch)).toBe(getClawdSprites(id.tint, id.accessory));
@@ -316,8 +319,8 @@ describe('who gets which art', () => {
   });
 
   it('keeps the NPCs human whatever the setting', () => {
+    expect(characterSpritesFor(subject({ id: ANSH_NPC_ID, palette: 1 }))).toBe(getAnshSprites());
     for (const npc of [
-      subject({ id: ANSH_NPC_ID, palette: 1 }),
       subject({ id: MANAGER_NPC_ID, palette: 0 }),
       subject({ id: GREETER_ID, isGreeter: true }),
       subject({ id: -7, isReceptionist: true }),

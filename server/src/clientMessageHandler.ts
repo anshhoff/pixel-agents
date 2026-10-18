@@ -25,7 +25,12 @@ import type { PermissionApprovals } from './permissions/approvalRegistry.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
-import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import {
+  claudeProvider,
+  hookProviderById,
+  hookProviders,
+  statusLineState,
+} from './providers/index.js';
 import { getSignalsHub } from './signals/registry.js';
 import type { UsageEntry } from './signals/tokenMeter.js';
 import { isDateKey } from './tasks/taskLedger.js';
@@ -42,6 +47,12 @@ export type SetHooksEnabledSideEffect = (
   providerId: string,
   enabled: boolean,
 ) => Promise<void> | void;
+
+/** Async usage meter toggle side effect: copy the status line script, then
+ *  install the statusLine entry (or remove it). Needs the dist root, known only
+ *  to the host. Throws when the install was refused (the user's own status
+ *  line, an unparseable settings.json); the handler re-derives the state. */
+export type SetUsageMeterEnabledSideEffect = (enabled: boolean) => Promise<void> | void;
 
 /**
  * Reload server-side assets after an external-asset-directory change and
@@ -69,6 +80,8 @@ export interface ClientMessageContext {
   onSetHooksEnabled?: SetHooksEnabledSideEffect;
   /** Reload assets after an external-asset-directory change. Needs the dist root, known only to cli.ts. */
   onReloadAssets?: ReloadAssetsSideEffect;
+  /** Install/remove the usage meter's status line. Needs the dist root, known only to cli.ts. */
+  onSetUsageMeterEnabled?: SetUsageMeterEnabledSideEffect;
   /**
    * Whether this client may change ANYTHING. An unprivileged client is
    * read-only: it may load and watch the office (`webviewReady`) and read the
@@ -252,6 +265,17 @@ export function handleClientMessage(
       // subscription. Everyone hears reportReady when it is saved.
       void runtime?.reports.writeNow();
       break;
+
+    case 'setAnshBrainEnabled':
+      // Privileged. Everyone hears the new anshBrainState.
+      runtime?.ansh.setEnabled(msg.enabled === true);
+      break;
+
+    case 'askAnsh':
+      // Privileged: it runs claude on the operator's subscription (still under
+      // the brain's own rate limit and daily cap).
+      void runtime?.ansh.ask();
+      break;
     case 'requestTimeline': {
       // Point-to-point too: only the client that tapped the character asked.
       const timeline = getSignalsHub()?.timelineMessage(store, msg.id);
@@ -379,6 +403,11 @@ export function handleClientMessage(
       adapter?.setSetting(KEY_HOOKS_INFO_SHOWN, true);
       break;
 
+    case 'setUsageMeterEnabled':
+      if (typeof msg.enabled !== 'boolean') break;
+      void applyUsageMeter(ctx, msg.enabled);
+      break;
+
     case 'addExternalAssetDirectory': {
       const newPath = msg.path as string | undefined;
       if (!newPath) break;
@@ -500,6 +529,21 @@ async function applyHooksPreference(
   } catch (err) {
     console.error('[Pixel Agents] Applying the hooks preference failed:', err);
   }
+}
+
+/**
+ * Run the usage meter toggle's side effect, then tell every office the ACTUAL
+ * state, re-derived from settings.json -- the toggle expresses intent, and the
+ * install refuses a status line of the user's own. Machine-wide (one
+ * settings.json), so it is a broadcast, not a reply. Never rejects.
+ */
+async function applyUsageMeter(ctx: ClientMessageContext, enabled: boolean): Promise<void> {
+  try {
+    await ctx.onSetUsageMeterEnabled?.(enabled);
+  } catch (err) {
+    console.error('[Pixel Agents] Usage meter toggle failed:', err);
+  }
+  ctx.store.broadcast({ type: 'usageMeterStatus', state: statusLineState() });
 }
 
 /**
@@ -660,6 +704,10 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
       });
   }
 
+  // 4a-ter. The usage meter's status line (on / off / the user's own). Read-only
+  // offices get it too: the server room's display says why it is blank.
+  send({ type: 'usageMeterStatus', state: statusLineState() });
+
   // 4b. Directory→Area mappings (must arrive before existingAgents so the
   // webview seat-preference logic has the dict when characters are created).
   send({
@@ -751,6 +799,10 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // them too (the card, without buttons).
   for (const pending of ctx.approvals?.pendingMessages() ?? []) send({ ...pending });
 
+  // 8c. Ansh's brain: on/off and the recent thoughts (read-only clients too:
+  // they watch him walk and talk, they just can't ask or switch him off).
+  if (runtime) send({ ...runtime.ansh.stateMessage() });
+
   // 9. Re-announce live terminals AFTER existingAgents, so a browser that
   // reloaded (or a second tab) rebuilds its drawer tabs. The PTY outlives the
   // socket, so these sessions are still attachable and their scrollback replays
@@ -822,6 +874,9 @@ function refuseReadOnly(
         .then((installed) => send({ type: 'hooksStatus', providerId: provider.id, installed }));
       return;
     }
+    case 'setUsageMeterEnabled':
+      send({ type: 'usageMeterStatus', state: statusLineState() });
+      return;
     case 'setSoundEnabled':
     case 'setAlwaysShowLabels':
     case 'setGhostHeadlessAgents':

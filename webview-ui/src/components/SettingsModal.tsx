@@ -5,6 +5,7 @@ import { isSoundEnabled, setSoundEnabled } from '../notificationSound.js';
 import { setAgentLook } from '../office/agentLook.js';
 import { isBrowserRuntime } from '../runtime.js';
 import { transport } from '../transport/index.js';
+import { setUsageMeterEnabled, useUsageMeter } from '../usage/usageStore.js';
 import { Button } from './ui/Button.js';
 import { Checkbox } from './ui/Checkbox.js';
 import { MenuItem } from './ui/MenuItem.js';
@@ -79,6 +80,10 @@ export function SettingsModal({
   // Agent look (Clawd / Classic): a view preference kept per browser, not a
   // server setting, so a read-only wall display can flip it too.
   const agentLook = useAgentLook();
+  // The server room's usage meter: bound to the ACTUAL status line state the
+  // server re-derives, never to the click (it refuses a status line of the
+  // user's own).
+  const usageMeter = useUsageMeter().meter;
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Settings">
@@ -225,6 +230,22 @@ export function SettingsModal({
         checked={alwaysShowOverlay}
         onChange={onToggleAlwaysShowOverlay}
       />
+      {/* Claude Code hands the subscription's usage only to a status line, so
+          the meter installs ours in ~/.claude/settings.json. */}
+      {usageMeter !== null && (
+        <Checkbox
+          label="Usage Meter (Server Room)"
+          checked={usageMeter === 'on'}
+          onChange={() => setUsageMeterEnabled(usageMeter !== 'on')}
+        />
+      )}
+      {(usageMeter === 'foreign' || usageMeter === 'unreadable') && (
+        <span className="block text-xs text-text-muted px-10 pb-4">
+          {usageMeter === 'foreign'
+            ? 'Your ~/.claude/settings.json already has a status line. Remove it to use the meter.'
+            : "~/.claude/settings.json can't be parsed, so nothing was written."}
+        </span>
+      )}
       {/* Agents as Clawds (Claude Code's mascot, tinted per repo) or the classic
           chibis. NPCs — Ansh, the Manager, the receptionist — stay chibis. */}
       <div className="flex items-center justify-between py-6 px-10 gap-8">

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 
+import { openAnshPanel } from '../../ansh/anshStore.js';
 import {
   CAMERA_FOLLOW_LERP,
   CAMERA_FOLLOW_SNAP_THRESHOLD,
@@ -736,9 +737,15 @@ export function OfficeCanvas({
         return;
       }
 
-      // The Manager opens the Tasks board (phase M). Not selectable: NPCs aren't agents.
-      if (officeState.getNpcAt(pos.worldX, pos.worldY) === 'manager') {
+      // The Manager opens the Tasks board (phase M), Ansh his thoughts. Not
+      // selectable: NPCs aren't agents.
+      const npc = officeState.getNpcAt(pos.worldX, pos.worldY);
+      if (npc === 'manager') {
         openTasksBoard('board');
+        return;
+      }
+      if (npc === 'ansh') {
+        openAnshPanel();
         return;
       }
 
