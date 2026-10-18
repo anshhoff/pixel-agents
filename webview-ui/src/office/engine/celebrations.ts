@@ -22,13 +22,13 @@ import {
   CONFETTI_GRAVITY,
   CONFETTI_LIFE_MIN_FRACTION,
   CONFETTI_LIFE_SEC,
-  CONFETTI_ORIGIN_DY,
   CONFETTI_PARTICLE_COUNT,
   CONFETTI_SPEED_MAX,
   CONFETTI_SPEED_MIN,
   CONFETTI_SPREAD_RAD,
   CONFETTI_TERMINAL_VY,
 } from '../../constants.js';
+import { metricsOf } from '../agentLook.js';
 import type { Character, FurnitureInstance, PlacedFurniture, Seat, SpriteData } from '../types.js';
 import { Direction, TILE_SIZE } from '../types.js';
 import type { ShipCandidate, ShipEvent, ShipSignal, ShipTally } from './shipEvents.js';
@@ -256,7 +256,8 @@ export class Celebrations {
       const id = attributeShip(event, candidates, this.signals, world.nowMs);
       const ch = id !== null ? world.characters.get(id) : undefined;
       if (!ch) continue;
-      this.bursts.push(spawnConfetti(ch.x, ch.y + CONFETTI_ORIGIN_DY, this.random));
+      // From over the head: a chibi's (-CONFETTI_ORIGIN_DY) or a Clawd's lower one.
+      this.bursts.push(spawnConfetti(ch.x, ch.y - metricsOf(ch).confettiRise, this.random));
       const seat = ch.seatId ? world.seats.get(ch.seatId) : undefined;
       const bell = world.entryOf(BELL_FURNITURE_TYPE);
       if (!seat || !bell) continue;

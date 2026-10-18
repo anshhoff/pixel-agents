@@ -12,11 +12,8 @@ import {
   ASHTRAY_BUTT_SLOTS,
   ASHTRAY_BUTT_WAIT_SEC,
   CIGARETTE_FILTER_COLOR,
-  CIGARETTE_HAND_RISE_PX,
   CIGARETTE_LENGTH_PX,
   CIGARETTE_PAPER_COLOR,
-  CIGARETTE_REACH_FRONT_PX,
-  CIGARETTE_REACH_SIDE_PX,
   SMOKE_ASH_DRIFT_PX,
   SMOKE_ASH_FALL_PX,
   SMOKE_ASH_FALL_SEC,
@@ -34,9 +31,6 @@ import {
   SMOKE_INHALE_SEC,
   SMOKE_LIGHT_UP_SEC,
   SMOKE_LIGHTER_FRAME_SEC,
-  SMOKE_MOUTH_BACK_EXTRA_RISE_PX,
-  SMOKE_MOUTH_RISE_PX,
-  SMOKE_MOUTH_SIDE_PX,
   SMOKE_PUFF_DRIFT_PX,
   SMOKE_PUFF_MAX_SIZE_PX,
   SMOKE_PUFF_START_ALPHA,
@@ -48,6 +42,8 @@ import {
   SMOKE_WISP_LIFETIME_SEC,
   SMOKE_WISP_RISE_PX_PER_SEC,
 } from '../../constants.js';
+import type { LookMetrics } from '../agentLook.js';
+import { lookMetrics } from '../agentLook.js';
 import type { Character, SpriteData } from '../types.js';
 import { Direction } from '../types.js';
 import { ZoneLabel } from '../zones.js';
@@ -58,18 +54,24 @@ export function isSmoking(ch: Character): boolean {
   return ch.zoneTarget?.zone === ZoneLabel.SMOKE && isSettledAtZoneTarget(ch);
 }
 
+/** The hand's place on a character: the chibi's by default, a Clawd's when
+ *  the renderer passes its metrics (agentLook.ts metricsOf). */
+export type HandMetrics = Pick<LookMetrics, 'handRise' | 'reachFront' | 'reachSide'>;
+export type MouthMetrics = Pick<LookMetrics, 'mouthRise' | 'mouthSide' | 'mouthBackExtra'>;
+
 /** The cigarette: paper px then the lit tip, held at the hand (px cover [dx, dx+1)). */
-export function cigarettePixels(dir: Direction): {
+export function cigarettePixels(
+  dir: Direction,
+  hand: HandMetrics = lookMetrics('classic'),
+): {
   paper: Array<{ dx: number; dy: number }>;
   tip: { dx: number; dy: number };
 } {
-  const dy = -CIGARETTE_HAND_RISE_PX;
+  const dy = -hand.handRise;
   // Sideways it points the way the character faces; otherwise out past its hand.
   const leftward = dir === Direction.LEFT;
   const start =
-    dir === Direction.LEFT || dir === Direction.RIGHT
-      ? CIGARETTE_REACH_SIDE_PX
-      : CIGARETTE_REACH_FRONT_PX;
+    dir === Direction.LEFT || dir === Direction.RIGHT ? hand.reachSide : hand.reachFront;
   const xs: number[] = [];
   for (let i = 0; i < CIGARETTE_LENGTH_PX; i++) {
     const right = start + i;
@@ -80,16 +82,19 @@ export function cigarettePixels(dir: Direction): {
 }
 
 /** Where the exhale leaves the face (over the head when facing away). */
-export function mouthOffset(dir: Direction): { dx: number; dy: number } {
+export function mouthOffset(
+  dir: Direction,
+  mouth: MouthMetrics = lookMetrics('classic'),
+): { dx: number; dy: number } {
   switch (dir) {
     case Direction.RIGHT:
-      return { dx: SMOKE_MOUTH_SIDE_PX, dy: -SMOKE_MOUTH_RISE_PX };
+      return { dx: mouth.mouthSide, dy: -mouth.mouthRise };
     case Direction.LEFT:
-      return { dx: -SMOKE_MOUTH_SIDE_PX - 1, dy: -SMOKE_MOUTH_RISE_PX };
+      return { dx: -mouth.mouthSide - 1, dy: -mouth.mouthRise };
     case Direction.UP:
-      return { dx: 0, dy: -SMOKE_MOUTH_RISE_PX - SMOKE_MOUTH_BACK_EXTRA_RISE_PX };
+      return { dx: 0, dy: -mouth.mouthRise - mouth.mouthBackExtra };
     default:
-      return { dx: 0, dy: -SMOKE_MOUTH_RISE_PX };
+      return { dx: 0, dy: -mouth.mouthRise };
   }
 }
 

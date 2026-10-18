@@ -15,6 +15,7 @@ import {
   RECEPTIONIST_HAND_COLOR,
   RECEPTIONIST_HAND_OUTLINE_COLOR,
 } from '../../constants.js';
+import { metricsOf } from '../agentLook.js';
 import type { Character } from '../types.js';
 import { CharacterState, TILE_SIZE } from '../types.js';
 import { emptyRoomTiles, occupiedTiles, TimeOfDay, timeOfDay } from './ambience.js';
@@ -97,7 +98,8 @@ function fillAt(
   );
 }
 
-/** A coffee run's cup, in hand on the way back (and for a while at the desk). */
+/** A coffee run's cup, in hand on the way back (and for a while at the desk);
+ *  at a Clawd's hand when it is one. */
 export function renderCoffeeCup(
   ctx: CanvasRenderingContext2D,
   ch: Character,
@@ -105,7 +107,7 @@ export function renderCoffeeCup(
   offsetY: number,
   zoom: number,
 ): void {
-  for (const p of cupPixels(ch.dir)) {
+  for (const p of cupPixels(ch.dir, metricsOf(ch))) {
     ctx.fillStyle = p.color;
     fillAt(ctx, ch, p.dx, p.dy, offsetX, offsetY, zoom);
   }

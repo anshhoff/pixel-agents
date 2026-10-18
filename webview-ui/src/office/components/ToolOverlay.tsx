@@ -4,8 +4,6 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '../../components/ui/Button.js';
 import {
   BUBBLE_FADE_DURATION_SEC,
-  BUBBLE_SITTING_OFFSET_PX,
-  BUBBLE_VERTICAL_OFFSET_PX,
   CHARACTER_SITTING_OFFSET_PX,
   COMPACT_LABEL_FONT_PX,
   COMPACT_LABEL_LIFT_PX,
@@ -33,7 +31,6 @@ import {
   STUCK_LABEL_TEXT,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
-  TOOL_OVERLAY_VERTICAL_OFFSET,
 } from '../../constants.js';
 import type {
   AgentProgressState,
@@ -58,6 +55,7 @@ import {
 import { signalLabel } from '../../signals/signalFormat.js';
 import { signalStore } from '../../signals/signalStore.js';
 import { labelDensity, originLabel } from '../agentLabel.js';
+import { metricsOf } from '../agentLook.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type { LabelBox } from '../labelLayout.js';
 import { resolveLabelOverlaps } from '../labelLayout.js';
@@ -305,6 +303,11 @@ export function ToolOverlay({
     const isHovered = hoveredId === id;
     const isSub = ch.isSubagent;
     const needsApproval = !isSub && approvalAgentIds?.has(id) === true;
+    // Where the label and bubble hang above this character: lower over a
+    // Clawd (half a chibi tall) than over a chibi, a crown higher over a lead
+    // Clawd (agentLook.ts).
+    const look = metricsOf(ch);
+    const lift = ch.isTeamLead ? look.leadLift : 0;
 
     // Speech bubble (permission dots / done checkmark) — rendered here in
     // the DOM, above the label panels (OVERLAY_BUBBLE_Z_INDEX over the label panels), for every
@@ -317,7 +320,7 @@ export function ToolOverlay({
         ch.bubbleType === 'permission' ? BUBBLE_PERMISSION_SPRITE : BUBBLE_WAITING_SPRITE,
         zoom,
       );
-      const bubbleSittingOff = ch.state === CharacterState.TYPE ? BUBBLE_SITTING_OFFSET_PX : 0;
+      const bubbleSittingOff = ch.state === CharacterState.TYPE ? look.bubbleSitDrop : 0;
       const alpha =
         ch.bubbleType === 'waiting' && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC
           ? ch.bubbleTimer / BUBBLE_FADE_DURATION_SEC
@@ -331,7 +334,7 @@ export function ToolOverlay({
             // anchor: project the anchor, then lift by the bubble's own
             // device-pixel height plus one zoomed pixel, in CSS px.
             top:
-              project.toScreenY(ch.y + bubbleSittingOff - BUBBLE_VERTICAL_OFFSET_PX) -
+              project.toScreenY(ch.y + bubbleSittingOff - look.bubbleRise - lift) -
               (cachedBubble.height + zoom) / dpr,
             opacity: alpha,
             zIndex: OVERLAY_BUBBLE_Z_INDEX,
@@ -345,7 +348,7 @@ export function ToolOverlay({
     // Position above character
     const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
     const screenX = project.toScreenX(ch.x);
-    const screenY = project.toScreenY(ch.y + sittingOffset - TOOL_OVERLAY_VERTICAL_OFFSET);
+    const screenY = project.toScreenY(ch.y + sittingOffset - look.labelRise - lift);
     // An empty positioned marker in place of a label panel, so overlay counts
     // stay stable and hover/select can still bring the panel back.
     const marker = (hidden?: string) => (
