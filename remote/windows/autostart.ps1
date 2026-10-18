@@ -16,7 +16,8 @@ param(
   [switch]$Uninstall,
   [switch]$Status,
   [string]$RepoPath,    # default: repo root (two levels up from this script)
-  [string]$NodePath     # default: node.exe on PATH
+  [string]$NodePath,    # default: node.exe on PATH
+  [string[]]$AllowedHost # extra Host names for the board; default: this PC's Tailscale name
 )
 $ErrorActionPreference = 'Stop'
 if ((@($Install.IsPresent, $Uninstall.IsPresent, $Status.IsPresent) -eq $true).Count -gt 1) {
@@ -31,8 +32,20 @@ $LogDir    = Join-Path $PaHome 'logs'
 $LaunchDir = Join-Path $PaHome 'autostart'
 $User      = [Security.Principal.WindowsIdentity]::GetCurrent().Name   # works for local, MSA and Entra accounts
 
+# The board answers loopback Host names only, unless told otherwise. Behind Tailscale Serve (:3443,
+# tailnet only) the phone sends this PC's MagicDNS name, so allow that one. Funnel carries /ingest to
+# the relay and never reaches the board, so this exposes nothing publicly.
+if (-not $AllowedHost) {
+  $ts = Get-Command tailscale -ErrorAction SilentlyContinue
+  if ($ts) {
+    try { $name = ((& $ts.Source status --json | Out-String | ConvertFrom-Json).Self.DNSName).TrimEnd('.') } catch { $name = $null }
+    if ($name) { $AllowedHost = @($name) }
+  }
+}
+$BoardArgs = '--port 3100 --no-terminal' + (($AllowedHost | ForEach-Object { " --allowed-host $_" }) -join '')
+
 $Services = @(
-  @{ Task = 'Pixel Agents Board'; Key = 'board'; Port = 3100; Args = '--port 3100 --no-terminal'
+  @{ Task = 'Pixel Agents Board'; Key = 'board'; Port = 3100; Args = $BoardArgs
      Script = (Join-Path $RepoPath 'dist\cli.js') },
   @{ Task = 'Pixel Agents Relay'; Key = 'relay'; Port = 3199; Args = 'serve'   # 3199 unless relay.json overrides it
      Script = (Join-Path $RepoPath 'remote\relay\relay.mjs') }
