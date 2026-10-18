@@ -36,6 +36,7 @@ import {
   startFileWatching,
   startStaleExternalAgentCheck,
 } from './fileWatcher.js';
+import { FunServices, getFunServices, setFunServices } from './fun/funServices.js';
 import type { HookEvent } from './hookEventHandler.js';
 import { HookEventHandler } from './hookEventHandler.js';
 import {
@@ -108,6 +109,8 @@ export class AgentRuntime {
   /** Keeps every open local session on the board and puts idle ones to sleep
    *  (see localSessions.ts). Polls only once started -- the standalone CLI does. */
   readonly localSessions: LocalSessionWatcher;
+  /** Week wall totals + weather (see fun/funServices.ts). Weather polls only once started. */
+  readonly fun: FunServices;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
 
@@ -119,10 +122,13 @@ export class AgentRuntime {
     // Both surfaces set a StateAdapter before building the runtime. A bare store
     // (tests) persists nothing else either, so its daily totals stay in memory
     // rather than landing in whatever home directory the process has.
-    this.progress = new ProgressTracker(
-      store,
-      options.progress ?? (store.getAdapter() ? {} : { dailyDir: null }),
-    );
+    const progressOptions = options.progress ?? (store.getAdapter() ? {} : { dailyDir: null });
+    this.progress = new ProgressTracker(store, progressOptions);
+    this.fun = new FunServices(store, {
+      dailyDir: progressOptions.dailyDir,
+      now: progressOptions.now,
+    });
+    setFunServices(this.fun);
     this.localSessions = new LocalSessionWatcher(
       store,
       {
@@ -426,6 +432,11 @@ export class AgentRuntime {
     this.localSessions.stop();
   }
 
+  /** Start polling the weather for the office windows (standalone only; needs the network). */
+  startWeather(): void {
+    this.fun.weather.start();
+  }
+
   // ── Agent removal (shared cleanup) ──
 
   /** Remove an agent: stop watchers, cancel timers, delete from store. */
@@ -706,6 +717,8 @@ export class AgentRuntime {
     this.subagentWatch.dispose();
     this.progress.dispose();
     if (getProgressTracker() === this.progress) setProgressTracker(null);
+    this.fun.dispose();
+    if (getFunServices() === this.fun) setFunServices(null);
 
     if (this.projectScanTimer.current) {
       clearInterval(this.projectScanTimer.current);

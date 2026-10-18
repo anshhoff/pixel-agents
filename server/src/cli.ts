@@ -33,6 +33,7 @@ import {
   WILDCARD_HOSTNAMES,
 } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
+import { weatherEnabled } from './fun/funConstants.js';
 import { localSessionWatchEnabled } from './localSessions.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
@@ -414,6 +415,8 @@ async function main(): Promise<void> {
         `[Pixel Agents] Session list off (${LOCAL_SESSIONS_ENABLED_ENV}): idle open sessions are not adopted.`,
       );
     }
+    // Real weather in the office windows (city guessed once from the IP; offline = none).
+    if (weatherEnabled()) runtime.startWeather();
 
     // The URL the operator opens has to be REACHABLE (a wildcard bind address
     // is a bind target, not an address you can browse to — `--host 0.0.0.0`

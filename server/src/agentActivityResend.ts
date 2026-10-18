@@ -1,4 +1,5 @@
 import type { AgentStateStore } from './agentStateStore.js';
+import { getFunServices } from './fun/funServices.js';
 import { getLocalSessionWatcher } from './localSessions.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { getProgressTracker } from './transcriptParser.js';
@@ -87,6 +88,15 @@ export function resendAgentActivity(
         contextTokens: agent.contextTokens,
         maxContextTokens: agent.maxContextTokens,
       });
+    }
+  }
+
+  // The week wall's totals and the weather (see fun/funServices.ts), found the
+  // same way as the progress below.
+  const fun = getFunServices();
+  if (fun?.tracks(store)) {
+    for (const message of fun.snapshot()) {
+      send({ ...message });
     }
   }
 
