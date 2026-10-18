@@ -25,10 +25,12 @@ import {
   LABEL_ROW_BAND_PX,
   LABEL_STACK_GAP_PX,
   LABEL_TITLE_MAX_CHARS,
+  LOOP_LABEL_TEXT,
   OVERLAY_BUBBLE_Z_INDEX,
   OVERLAY_LABEL_SELECTED_Z_INDEX,
   OVERLAY_LABEL_Z_INDEX,
   SMOKE_BREAK_TAG,
+  STUCK_LABEL_TEXT,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
   TOOL_OVERLAY_VERTICAL_OFFSET,
@@ -49,6 +51,8 @@ import {
   sleepLabel,
   waitLevel,
 } from '../../progress/progressFormat.js';
+import { signalLabel } from '../../signals/signalFormat.js';
+import { signalStore } from '../../signals/signalStore.js';
 import { labelDensity, originLabel } from '../agentLabel.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type { LabelBox } from '../labelLayout.js';
@@ -73,6 +77,8 @@ const WAIT_BADGE_FONT_PX = 14;
 const PROGRESS_ROW_GAP_PX = 2;
 // The parent's "👥 2 helpers" row (text-2xs, leading-none), lifted the same way.
 const HELPERS_LINE_FONT_PX = 16;
+// The signals row ("🌀 going in circles?", "🚨 stuck?"), lifted the same way.
+const SIGNAL_LINE_FONT_PX = 14;
 
 const PIP_COLORS: Record<PipState, string> = {
   done: 'var(--color-status-success)',
@@ -264,6 +270,7 @@ export function ToolOverlay({
   const selectedId = officeState.selectedAgentId;
   const hoveredId = officeState.hoveredAgentId;
   const now = nowRef.current;
+  const signals = signalStore.getSnapshot();
 
   // Live helpers per parent, for the parent's "👥 2 helpers" row. One leaving
   // (despawn effect playing) no longer counts.
@@ -458,7 +465,16 @@ export function ToolOverlay({
     const trackProgress = progress && hasStageTrack(progress) ? progress : null;
     const waitMs =
       progress?.waitingSince !== undefined ? Math.max(0, now - progress.waitingSince) : null;
+    // Useful signals: the alarm's "stuck?" and the loop detector's line.
+    const signalLine =
+      isSub || asleep
+        ? undefined
+        : signalLabel(signals.trouble.get(id), signals.loops.has(id), {
+            stuck: STUCK_LABEL_TEXT,
+            loop: LOOP_LABEL_TEXT,
+          });
     const extraRowsLiftPx =
+      (signalLine ? SIGNAL_LINE_FONT_PX + PROGRESS_ROW_GAP_PX : 0) +
       (trackProgress ? STAGE_TRACK_FONT_PX + PROGRESS_ROW_GAP_PX : 0) +
       (waitMs !== null ? WAIT_BADGE_FONT_PX + PROGRESS_ROW_GAP_PX : 0) +
       (helpers > 0 ? HELPERS_LINE_FONT_PX : 0);
@@ -558,6 +574,19 @@ export function ToolOverlay({
                 data-wait-level={waitLevel(waitMs)}
               >
                 ⏳ waiting on you {formatWait(waitMs)}
+              </span>
+            )}
+            {!compact && signalLine && (
+              <span
+                className="block leading-none"
+                style={{
+                  fontSize: SIGNAL_LINE_FONT_PX,
+                  marginTop: PROGRESS_ROW_GAP_PX,
+                  color: 'var(--color-status-permission)',
+                }}
+                data-testid="signal-line"
+              >
+                {signalLine}
               </span>
             )}
           </div>

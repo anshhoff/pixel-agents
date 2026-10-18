@@ -717,7 +717,9 @@ describe('ProgressTracker wiring', () => {
       { type: 'agentProgress', id: 1, phase: 'test', reached: ['test'] },
       { type: 'agentProgress', id: 2, reached: [] },
     ]);
-    expect(sent.at(-1)).toMatchObject({ type: 'dailyStats', date: TODAY, commandsRun: 1 });
+    expect(sent.filter((m) => m.type === 'dailyStats')).toMatchObject([
+      { type: 'dailyStats', date: TODAY, commandsRun: 1 },
+    ]);
 
     // Another runtime's store gets none of this one's progress.
     const other = new AgentStateStore();

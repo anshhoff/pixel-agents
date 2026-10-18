@@ -53,6 +53,8 @@ import { overlayProjection } from './office/projection.js';
 import { getPetCount } from './office/sprites/petSpriteData.js';
 import { EditTool, type OfficeLayout, TILE_SIZE } from './office/types.js';
 import { isBrowserRuntime, isE2E } from './runtime.js';
+import { NoticeBoardOverlay } from './signals/NoticeBoardOverlay.js';
+import { TimelineCard } from './signals/TimelineCard.js';
 import { installTestHooks } from './testHooks.js';
 import { transport } from './transport/index.js';
 
@@ -677,6 +679,23 @@ function App() {
             containerRef={containerRef}
             zoom={editor.zoom}
             panRef={editor.panRef}
+          />
+
+          {/* Useful signals: the notice board's lines, and the tapped character's timeline. */}
+          <NoticeBoardOverlay
+            officeState={officeState}
+            containerRef={containerRef}
+            zoom={editor.zoom}
+            panRef={editor.panRef}
+            hidden={editor.isEditMode}
+          />
+          <TimelineCard
+            officeState={officeState}
+            containerRef={containerRef}
+            zoom={editor.zoom}
+            panRef={editor.panRef}
+            sheet={isMobile}
+            hidden={editor.isEditMode}
           />
 
           {/* Done-today strip. Hidden while editing: the editor toolbar takes

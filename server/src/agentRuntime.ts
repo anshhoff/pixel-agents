@@ -49,6 +49,8 @@ import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { PathSet, pathsMatch } from './pathKey.js';
 import { ProgressTracker, type ProgressTrackerOptions } from './progress/progressTracker.js';
 import { SessionRouter } from './sessionRouter.js';
+import { getSignalsHub, setSignalsHub } from './signals/registry.js';
+import { SignalsHub, type SignalsHubOptions } from './signals/signalsHub.js';
 import { SubagentWatch } from './subagentWatch.js';
 import { ManagerReports, type ManagerReportsOptions } from './tasks/managerReports.js';
 import {
@@ -93,6 +95,10 @@ export interface AgentRuntimeOptions {
    *  what the VS Code adapter gets: two surfaces writing one day's task file
    *  would clobber each other's tasks. Clock, claude runner and env: tests. */
   manager?: Omit<ManagerReportsOptions, 'dataDir'> & { dataDir?: string };
+  /** Token files, notice board runner and clock for the useful signals (tests).
+   *  Default: ~/.pixel-agents/tokens and `gh` with a StateAdapter, in memory
+   *  and no board without one. */
+  signals?: SignalsHubOptions;
 }
 
 export class AgentRuntime {
@@ -123,6 +129,8 @@ export class AgentRuntime {
   readonly subagentWatch: SubagentWatch;
   /** Stage track per agent + done-today totals (see progress/progressTracker.ts). */
   readonly progress: ProgressTracker;
+  /** Trouble, loops, timeline, tokens, notice board (see signals/signalsHub.ts). */
+  readonly signals: SignalsHub;
   /** Keeps every open local session on the board and puts idle ones to sleep
    *  (see localSessions.ts). Polls only once started -- the standalone CLI does. */
   readonly localSessions: LocalSessionWatcher;
@@ -149,6 +157,12 @@ export class AgentRuntime {
       store,
       options.progress ?? (store.getAdapter() ? {} : { dailyDir: null }),
     );
+    this.signals = new SignalsHub(
+      store,
+      this.progress,
+      options.signals ?? (store.getAdapter() ? {} : { tokensDir: null, noticeBoard: null }),
+    );
+    setSignalsHub(this.signals);
     this.localSessions = new LocalSessionWatcher(
       store,
       {
@@ -643,6 +657,8 @@ export class AgentRuntime {
       () => this.expireRemoteAgents(),
       REMOTE_EXPIRY_CHECK_INTERVAL_MS,
     );
+    // Both surfaces start this check: the signals' timers (stall check, gh polls) ride along.
+    this.signals.start();
   }
 
   /** Remove remote agents with no event for REMOTE_AGENT_TTL_MS. */
@@ -766,6 +782,8 @@ export class AgentRuntime {
     this.subagentWatch.dispose();
     this.progress.dispose();
     if (getProgressTracker() === this.progress) setProgressTracker(null);
+    this.signals.dispose();
+    if (getSignalsHub() === this.signals) setSignalsHub(null);
 
     if (this.projectScanTimer.current) {
       clearInterval(this.projectScanTimer.current);

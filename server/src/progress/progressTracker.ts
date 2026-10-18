@@ -104,6 +104,9 @@ interface PrSighting {
   repo?: string;
 }
 
+/** A push, or a PR newly added to today's list (see ProgressTracker.onLanded). */
+export type Landed = { kind: 'push'; repo: string } | { kind: 'pr'; pr: DailyPr };
+
 interface AgentTrack {
   phase?: WorkPhase;
   reached: WorkPhase[];
@@ -146,6 +149,8 @@ export class ProgressTracker {
   private disposed = false;
   private readonly dailyDir: string | null;
   private readonly now: () => number;
+  /** Hears each push and new PR, attributed to its agent (the timeline, signals/). */
+  private landedListener: ((agentId: number, landed: Landed) => void) | null = null;
 
   constructor(
     private readonly store: AgentStateStore,
@@ -164,6 +169,11 @@ export class ProgressTracker {
    *  shadow sub-agent store, whose tools must not count. */
   tracks(store: AgentStateStore): boolean {
     return !this.disposed && store === this.store;
+  }
+
+  /** Hear about every push and every new PR as it lands (one listener; null removes it). */
+  onLanded(listener: ((agentId: number, landed: Landed) => void) | null): void {
+    this.landedListener = listener;
   }
 
   // ── Inputs ─────────────────────────────────────────────────
@@ -218,6 +228,7 @@ export class ProgressTracker {
       else day.pushes.push({ repo, count: 1 });
       changed = true;
       this.emit({ kind: 'push', agentId, at: now, repo });
+      this.landedListener?.(agentId, { kind: 'push', repo });
     }
     if (opened) {
       const url = findPrUrl(textOf(result.response)) ?? findPrUrl(result.prUrl);
@@ -379,6 +390,7 @@ export class ProgressTracker {
     };
     day.prs.push(entry);
     this.emit({ kind: 'pr', agentId, at, pr: { ...entry } });
+    this.landedListener?.(agent.id, { kind: 'pr', pr: { ...entry } });
     return true;
   }
 

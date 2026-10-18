@@ -11,6 +11,7 @@ import {
   ZOOM_SCROLL_THRESHOLD,
 } from '../../constants.js';
 import { unlockAudio } from '../../notificationSound.js';
+import { furnitureWithSignals } from '../../signals/officeSignals.js';
 import { openTasksBoard } from '../../tasks/tasksStore.js';
 import { transport } from '../../transport/index.js';
 import { pastDragThreshold } from '../camera.js';
@@ -236,7 +237,10 @@ export function OfficeCanvas({
           w,
           h,
           officeState.tileMap,
-          officeState.furniture,
+          // Runtime-only trouble icons (desk fire / alarm lamp); never while editing.
+          isEditMode
+            ? officeState.furniture
+            : furnitureWithSignals(officeState, officeState.furniture),
           officeState.getCharacters(),
           zoom,
           panRef.current.x,

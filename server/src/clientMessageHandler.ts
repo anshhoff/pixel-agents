@@ -25,12 +25,15 @@ import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import { getSignalsHub } from './signals/registry.js';
 import { isDateKey } from './tasks/taskLedger.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
 
+/** What a read-only office may send: messages that only read. Everything else
+ *  is refused at the top of handleClientMessage. */
 /** Async hook toggle side effect (install/uninstall + script copy). Provided by cli.ts. */
 export type SetHooksEnabledSideEffect = (
   providerId: string,
@@ -95,6 +98,8 @@ const READ_ONLY_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'webviewReady',
   'requestTasks',
   'requestReport',
+  // Tap-for-timeline: one agent's recent actions, sent back to the asker only.
+  'requestTimeline',
 ]);
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -230,6 +235,12 @@ export function handleClientMessage(
       // subscription. Everyone hears reportReady when it is saved.
       void runtime?.reports.writeNow();
       break;
+    case 'requestTimeline': {
+      // Point-to-point too: only the client that tapped the character asked.
+      const timeline = getSignalsHub()?.timelineMessage(store, msg.id);
+      if (timeline) send({ ...timeline });
+      break;
+    }
 
     case 'saveLayout':
       if (msg.layout) {
