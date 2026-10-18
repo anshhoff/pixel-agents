@@ -40,6 +40,10 @@ export const CLAUDE_HOOK_EVENTS = [
   'TaskCompleted',
 ] as const;
 
+/** `timeout` (seconds) on every hook entry we install, except PermissionRequest
+ *  (see permissions/constants.ts PERMISSION_HOOK_TIMEOUT_SECONDS). */
+export const HOOK_TIMEOUT_SECONDS = 5;
+
 /** Suffix of the one-time pre-modification backup of settings.json. Brand-named
  *  rather than a generic `.backup`, which collides with other tools' backup
  *  convention: a foreign `.backup` sitting next to settings.json must not make

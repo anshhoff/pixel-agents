@@ -4,9 +4,11 @@ import * as path from 'path';
 import { isDeepStrictEqual } from 'util';
 
 import { HOOK_SCRIPTS_DIR } from '../../../constants.js';
+import { PERMISSION_HOOK_TIMEOUT_SECONDS } from '../../../permissions/constants.js';
 import {
   CLAUDE_HOOK_EVENTS,
   CLAUDE_HOOK_SCRIPT_NAME,
+  HOOK_TIMEOUT_SECONDS,
   LEGACY_HOOK_SCRIPT_NAME,
   SETTINGS_BACKUP_SUFFIX,
   SETTINGS_FRESH_FILE_MODE,
@@ -532,15 +534,24 @@ function makeHookCommand(): string {
   return `node "${scriptPath}"`;
 }
 
+/** Seconds Claude Code lets our hook run for `event`. Every event is a quick
+ *  POST, except PermissionRequest: it may wait on the board for a human's
+ *  answer (permissions/), so it gets the long timeout. An install written
+ *  before this split carries 5 there; the next install (every consented
+ *  startup) replaces the entry, since it no longer equals what we write. */
+function hookTimeoutFor(event: string | undefined): number {
+  return event === 'PermissionRequest' ? PERMISSION_HOOK_TIMEOUT_SECONDS : HOOK_TIMEOUT_SECONDS;
+}
+
 /** Create a hook entry object for Claude's settings.json. Matcher is empty (catch-all). */
-function makeHookEntry(): ClaudeHookEntry {
+function makeHookEntry(event?: string): ClaudeHookEntry {
   return {
     matcher: '',
     hooks: [
       {
         type: 'command',
         command: makeHookCommand(),
-        timeout: 5,
+        timeout: hookTimeoutFor(event),
       },
     ],
   };
@@ -666,7 +677,7 @@ function installEntries(): Promise<boolean> {
       }
       const entries = hooks[event];
       // Remove any existing Pixel Agents commands (in case the script path changed)
-      const filtered = (withoutOurEntries(entries) ?? entries).concat(makeHookEntry());
+      const filtered = (withoutOurEntries(entries) ?? entries).concat(makeHookEntry(event));
       if (JSON.stringify(filtered) !== JSON.stringify(entries)) {
         hooks[event] = filtered;
         changed = true;
