@@ -39,9 +39,12 @@ export function NpcOverlay({ officeState, containerRef, zoom, panRef }: NpcOverl
     let last: LabelPos | null = null;
     const tick = () => {
       rafId = requestAnimationFrame(tick);
-      // While Ansh is talking, his bubble is his label.
+      // While an NPC is talking (a thought, an errand's line), the bubble is its label.
       const hovered = officeState.npcs.hovered;
-      const kind = hovered === 'ansh' && getAnshState().bubble ? null : hovered;
+      const speaking =
+        (hovered === 'ansh' && getAnshState().bubble !== null) ||
+        officeState.npcLinesShowing().some((l) => l.who === hovered);
+      const kind = speaking ? null : hovered;
       const ch = officeState.npcs.characterOf(kind);
       const el = containerRef.current;
       let next: LabelPos | null = null;

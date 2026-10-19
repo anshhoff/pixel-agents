@@ -80,6 +80,7 @@ import {
   renderCoffeeCup,
   renderNightLights,
   renderPlateText,
+  renderWateringCan,
   renderWave,
 } from './ambienceRender.js';
 import { getCharacterSprite } from './characters.js';
@@ -506,6 +507,15 @@ export function renderScene(
       drawables.push({
         zY: charZY + CIGARETTE_Z_SORT_OFFSET,
         draw: (c) => renderCoffeeCup(c, holder, offsetX, offsetY, zoom),
+      });
+    }
+    // Ansh watering a plant.
+    if (ch.wateringCan !== undefined) {
+      const waterer = ch;
+      const t = ch.wateringCan;
+      drawables.push({
+        zY: charZY + CIGARETTE_Z_SORT_OFFSET,
+        draw: (c) => renderWateringCan(c, waterer, t, offsetX, offsetY, zoom),
       });
     }
     if (ch.waveFrame !== undefined) {

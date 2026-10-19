@@ -2,12 +2,13 @@ import type { AnshThoughtEntry, DailyStats } from '../../../../core/src/messages
 import { pickDiversePalette } from '../../../../core/src/paletteUtils.js';
 import {
   ANSH_CHAT_STAY_SEC,
+  ANSH_COFFEE_CUP_SEC,
+  ANSH_PET_HEART_SEC,
   ANSH_STRETCH_RADIUS_TILES,
   ANSH_STRETCH_STAY_SEC,
   ANSH_VISIT_STAY_SEC,
   ANSH_WANDER_MIN_SEC,
   ANSH_WANDER_RANGE_SEC,
-  ANSH_WANDER_STAY_SEC,
   ASHTRAY_BUTT_SLOTS,
   AUTO_ON_FACING_DEPTH,
   AUTO_ON_SIDE_DEPTH,
@@ -58,6 +59,19 @@ import type {
 import { CharacterState, Direction, PetState, TILE_SIZE } from '../types.js';
 import type { OfficeZones } from '../zones.js';
 import { isRoutedZoneLabel, NO_ZONES, parseZones, toZoneLabel, ZoneLabel } from '../zones.js';
+import { timeOfDay } from './ambience.js';
+import type { ErrandOption, TimedLine } from './anshErrands.js';
+import {
+  AnshErrand,
+  errandScript,
+  faceToFaceSpot,
+  furnitureErrand,
+  linesShowing,
+  pickErrand,
+  scheduleLines,
+  standSpotFor,
+  tileBeside,
+} from './anshErrands.js';
 import { Celebrations } from './celebrations.js';
 import { createCharacter, isSettledAtZoneTarget, updateCharacter } from './characters.js';
 import type { CoffeeRunState } from './coffeeRuns.js';
@@ -70,7 +84,7 @@ import {
 } from './coffeeRuns.js';
 import { advanceMatrixEffect, startMatrixEffect } from './matrixEffectState.js';
 import type { NpcKind } from './npcs.js';
-import { OfficeNpcs } from './npcs.js';
+import { faceToward, OfficeNpcs } from './npcs.js';
 import {
   coffeeZones,
   furnitureAt,
@@ -78,7 +92,7 @@ import {
   placeReceptionist,
   withLiveClocks,
 } from './officeAmbience.js';
-import { createPet, updatePet } from './petEntity.js';
+import { createPet, updateIdleAnimation, updatePet } from './petEntity.js';
 import { waveFrame } from './receptionist.js';
 import { anchorTile, closestFreeSeat, helperSeat } from './seatPlacement.js';
 import type { SmokeBreakState } from './smokeBreaks.js';
@@ -132,6 +146,16 @@ function seatFacingOffset(direction: Direction): { dCol: number; dRow: number } 
   if (direction === Direction.DOWN) return { dCol: 0, dRow: 1 };
   return { dCol: 0, dRow: -1 };
 }
+
+/** Where one of Ansh's errands takes him, what he looks at, and who with. */
+interface AnshErrandTarget {
+  near: { col: number; row: number };
+  look: () => { col: number; row: number } | null;
+  pet?: Pet;
+  partner?: Character;
+}
+
+const tileOf = (t: { tileCol: number; tileRow: number }) => ({ col: t.tileCol, row: t.tileRow });
 
 export class OfficeState {
   layout: OfficeLayout;
@@ -197,6 +221,20 @@ export class OfficeState {
   /** Seconds Ansh has sat at his desk, and how long he sits before wandering. */
   private anshDeskSec = 0;
   private anshWanderAfterSec: number | null = null;
+  /** The errand he did last (the next one is something else), and a count
+   *  that tells one errand's lines from the next. */
+  private anshLastErrand: AnshErrand | null = null;
+  private anshErrandSeq = 0;
+  /** What is said on his errands (his lines, the answers), on the office clock. */
+  private anshLines: Array<TimedLine & { seq: number }> = [];
+  /** The pet sitting still for him to pet it, by id; null when none. */
+  private anshPetHold: string | null = null;
+  /** Pets the fun director drove last frame: busy, not to be petted. */
+  private readonly petsDriven = new Set<string>();
+  /** Office-clock time the cup from the coffee machine is finished. */
+  private anshCupUntil = 0;
+  /** Office-clock time he began watering a plant, or null. */
+  private anshWateringSince: number | null = null;
   /** Phase B: bells, confetti and the trophy wall's tally (celebrations.ts). */
   readonly celebrations = new Celebrations();
 
@@ -285,6 +323,7 @@ export class OfficeState {
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
     this.zones = this.buildZones();
     this.npcs = this.buildNpcs();
+    this.resetAnshErrands();
     this.coffeeCounter = coffeeZones(this);
 
     // Shift character positions when grid expands left/up
@@ -2124,11 +2163,19 @@ export class OfficeState {
     // Phase M: Ansh at the desk, the Manager (and its report-time visit).
     this.npcs.update(dt, this);
     this.tickAnshWander(dt);
+    this.tickAnshErrand();
 
     // ── Pet FSM ────────────────────────────────────────────────
     for (const pet of this.pets) {
-      // Fun: the smart pets go where they're needed; otherwise their own FSM.
-      if (!this.fun.drivePet(pet, dt)) {
+      if (pet.id === this.anshPetHold) {
+        // Sitting still for Ansh, who is on his way to pet it (or petting it).
+        updateIdleAnimation(pet, dt);
+      } else if (this.fun.drivePet(pet, dt)) {
+        // Fun: the smart pets go where they're needed...
+        this.petsDriven.add(pet.id);
+      } else {
+        // ...otherwise their own FSM.
+        this.petsDriven.delete(pet.id);
         updatePet(pet, dt, this.walkableTiles, this.characters, this.tileMap, this.blockedTiles);
       }
 
@@ -2225,29 +2272,182 @@ export class OfficeState {
   }
 
   /**
-   * Between thoughts: a wander of his own (no claude, nothing said) -- to a
-   * place in the Café, the Lounge or the Server room, or a stretch nearby --
-   * stay a while, walk back. False (he stays seated) without an Ansh or a spot.
+   * Between thoughts: an errand of his own (no claude) -- pet a pet, water a
+   * plant, make a coffee, chat with the receptionist or the Manager, look out
+   * of a window, read the whiteboard, feed the fish, or (quietly) go to the
+   * Café, Lounge or Server room or stretch nearby -- drawn among what the
+   * office has right now (anshErrands.ts). He stays a while, says his line
+   * (the other side of a chat answers) and walks back. False (he stays
+   * seated) without an Ansh or anything to do.
    */
   anshWander(random: () => number = this.anshWanderRandom): boolean {
     const ansh = this.npcs.ansh;
     if (!ansh) return false;
-    const places = [ZoneLabel.CAFE, ZoneLabel.LOUNGE, ZoneLabel.SERVER].flatMap(
-      (z) => this.zones.zones.get(z)?.places ?? [],
-    );
-    // One pick across the places plus the stretch, so a bigger lounge doesn't
-    // crowd out the rest any more than its seats would.
-    const pick = Math.floor(random() * (places.length + 1));
-    const place = places[pick];
-    const near = place ? { col: place.col, row: place.row } : this.anshStretchSpot(ansh, random);
-    if (!near) return false;
-    const spot = this.closestFreeWalkableTile(near.col, near.row);
+    const pick = pickErrand(this.anshErrandOptions(ansh, random), random, this.anshLastErrand);
+    if (!pick || !this.startAnshErrandFor(pick.kind, pick.target, random)) return false;
+    this.anshLastErrand = pick.kind;
+    return true;
+  }
+
+  /** The lines being said on Ansh's errands right now (one per speaker), for
+   *  the NPC speech overlay. */
+  npcLinesShowing(): TimedLine[] {
+    return linesShowing(this.anshLines, this.officeClock);
+  }
+
+  /** Everything he could do now, with where he'd stand for each. */
+  private anshErrandOptions(
+    ansh: Character,
+    random: () => number,
+  ): Array<ErrandOption<AnshErrandTarget>> {
+    const taken = new Set<string>();
+    for (const ch of this.characters.values()) taken.add(`${ch.tileCol},${ch.tileRow}`);
+    for (const ch of [this.receptionist, this.npcs.manager]) {
+      if (ch) taken.add(`${ch.tileCol},${ch.tileRow}`);
+    }
+    const free = (col: number, row: number) =>
+      !taken.has(`${col},${row}`) && isWalkable(col, row, this.tileMap, this.blockedTiles);
+    const byKind = new Map<AnshErrand, AnshErrandTarget[]>();
+    const add = (kind: AnshErrand, target: AnshErrandTarget) => {
+      const list = byKind.get(kind);
+      if (list) list.push(target);
+      else byKind.set(kind, [target]);
+    };
+
+    // Furniture: plants, the coffee machine, windows, boards, the fish tank.
+    for (const item of this.layout.furniture) {
+      const kind = furnitureErrand(item.type);
+      const entry = kind ? getCatalogEntry(item.type) : undefined;
+      if (!kind || !entry) continue;
+      const spot = standSpotFor(item, { w: entry.footprintW, h: entry.footprintH }, free);
+      if (spot) add(kind, { near: spot, look: () => spot.look });
+    }
+    // The pets that aren't busy with something of their own.
+    for (const pet of this.pets) {
+      if (this.petsDriven.has(pet.id)) continue;
+      const near = tileBeside(tileOf(pet), free);
+      if (near) add(AnshErrand.PET, { near, look: () => tileOf(pet), pet });
+    }
+    // A chat across their desk (beside them when there's no way round).
+    const partner = (kind: AnshErrand, ch: Character | null) => {
+      if (!ch) return;
+      const near =
+        faceToFaceSpot({ ...tileOf(ch), facing: ch.dir }, free) ?? tileBeside(tileOf(ch), free);
+      if (near) add(kind, { near, look: () => tileOf(ch), partner: ch });
+    };
+    partner(AnshErrand.RECEPTION, this.receptionist);
+    if (!this.npcs.visiting) partner(AnshErrand.MANAGER, this.npcs.manager);
+    // The quiet ones: a place in the Café, Lounge or Server room; a stretch.
+    for (const z of [ZoneLabel.CAFE, ZoneLabel.LOUNGE, ZoneLabel.SERVER]) {
+      for (const place of this.zones.zones.get(z)?.places ?? []) {
+        const near = { col: place.col, row: place.row };
+        add(AnshErrand.PLACE, { near, look: () => near });
+      }
+    }
+    const stretch = this.anshStretchSpot(ansh, random);
+    if (stretch) add(AnshErrand.STRETCH, { near: stretch, look: () => stretch });
+
+    // In a fixed order, so a seeded pick is reproducible.
+    const order: AnshErrand[] = [
+      AnshErrand.PET,
+      AnshErrand.PLANT,
+      AnshErrand.COFFEE,
+      AnshErrand.RECEPTION,
+      AnshErrand.MANAGER,
+      AnshErrand.WINDOW,
+      AnshErrand.BOARD,
+      AnshErrand.FISH,
+      AnshErrand.PLACE,
+      AnshErrand.STRETCH,
+    ];
+    return order.map((kind) => ({ kind, targets: byKind.get(kind) ?? [] }));
+  }
+
+  /** Set Ansh off on an errand: the walk, then what happens once there. */
+  private startAnshErrandFor(
+    kind: AnshErrand,
+    target: AnshErrandTarget,
+    random: () => number,
+  ): boolean {
+    const ansh = this.npcs.ansh;
+    if (!ansh) return false;
+    const spot =
+      kind === AnshErrand.PLACE || kind === AnshErrand.STRETCH
+        ? this.closestFreeWalkableTile(target.near.col, target.near.row)
+        : target.near;
     if (!spot) return false;
-    return this.npcs.startAnshErrand(
-      spot,
-      place ? ANSH_WANDER_STAY_SEC : ANSH_STRETCH_STAY_SEC,
-      () => near,
-    );
+    const script = errandScript(kind, random, {
+      petName: target.pet?.name,
+      timeOfDay: timeOfDay(this.ambienceNow()),
+    });
+    const seq = ++this.anshErrandSeq;
+    const { pet, partner } = target;
+    if (pet) this.holdPetForAnsh(pet);
+    let partnerDir: Direction | null = null;
+    const started = this.npcs.startAnshErrand(spot, script.staySec, target.look, {
+      onArrive: () => {
+        const lines = scheduleLines(script.lines, this.officeClock).map((l) => ({ ...l, seq }));
+        this.anshLines = [...this.anshLines, ...lines];
+        const here = tileOf(ansh);
+        if (pet) {
+          pet.dir = faceToward(tileOf(pet), here, pet.dir);
+          pet.bubbleType = 'heart';
+          pet.bubbleTimer = ANSH_PET_HEART_SEC;
+        }
+        if (partner) {
+          partnerDir = partner.dir;
+          partner.dir = faceToward(tileOf(partner), here, partner.dir);
+        }
+        if (kind === AnshErrand.PLANT) this.anshWateringSince = this.officeClock;
+      },
+      onLeave: (stayed) => {
+        // Cut short (a thought, no way there): what was still to be said goes.
+        if (!stayed) this.anshLines = this.anshLines.filter((l) => l.seq !== seq);
+        if (pet && this.anshPetHold === pet.id) this.anshPetHold = null;
+        // The Manager may have set off for Ansh's desk meanwhile: leave it be.
+        const managerAway = partner === this.npcs.manager && this.npcs.visiting;
+        if (partner && partnerDir !== null && !managerAway) partner.dir = partnerDir;
+        this.anshWateringSince = null;
+        if (stayed && kind === AnshErrand.COFFEE) {
+          this.anshCupUntil = this.officeClock + ANSH_COFFEE_CUP_SEC;
+        }
+      },
+    });
+    if (!started && pet && this.anshPetHold === pet.id) this.anshPetHold = null;
+    return started;
+  }
+
+  /** The pet stops where it is and sits for Ansh until he is done. */
+  private holdPetForAnsh(pet: Pet): void {
+    this.anshPetHold = pet.id;
+    pet.state = PetState.IDLE;
+    pet.path = [];
+    pet.moveProgress = 0;
+    pet.followTargetId = null;
+    pet.x = pet.tileCol * TILE_SIZE + TILE_SIZE / 2;
+    pet.y = pet.tileRow * TILE_SIZE + TILE_SIZE / 2;
+    pet.frame = 0;
+    pet.frameTimer = 0;
+  }
+
+  /** Per frame: the cup and the watering can in his hand; old lines dropped. */
+  private tickAnshErrand(): void {
+    const ansh = this.npcs.ansh;
+    const now = this.officeClock;
+    if (this.anshLines.length > 0) this.anshLines = this.anshLines.filter((l) => now < l.until);
+    if (!ansh) return;
+    const watering = this.anshWateringSince;
+    ansh.wateringCan = watering === null ? undefined : now - watering;
+    // The cup is put down while he waters.
+    ansh.carryingCup = (watering === null && now < this.anshCupUntil) || undefined;
+  }
+
+  /** A new layout: errands under way are dropped (the NPCs are rebuilt). */
+  private resetAnshErrands(): void {
+    this.anshLines = [];
+    this.anshPetHold = null;
+    this.anshWateringSince = null;
+    this.anshCupUntil = 0;
   }
 
   /** A walkable tile within ANSH_STRETCH_RADIUS_TILES of Ansh, or null. */

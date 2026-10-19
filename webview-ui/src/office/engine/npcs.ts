@@ -54,6 +54,19 @@ interface AnshErrand {
   staySec: number;
   /** The tile he came for (an agent, the Manager): faced while he stays. */
   lookAt: () => { col: number; row: number } | null;
+  hooks: AnshErrandHooks;
+  /** onLeave has run (it runs once). */
+  left: boolean;
+}
+
+/** What an errand's owner hears of it (OfficeState's between-thoughts errands). */
+export interface AnshErrandHooks {
+  /** He got there: the stay begins. */
+  onArrive?: () => void;
+  /** The stay is over, or won't happen: `stayed` is true when he stayed it
+   *  out, false when he couldn't get there or another errand replaced it.
+   *  Runs once per errand. */
+  onLeave?: (stayed: boolean) => void;
 }
 
 /** One frame of an NPC's walk, with its own seat counted walkable. */
@@ -179,10 +192,12 @@ export class OfficeNpcs {
     spot: { col: number; row: number },
     staySec: number,
     lookAt: () => { col: number; row: number } | null,
+    hooks: AnshErrandHooks = {},
   ): boolean {
     const ch = this.ansh;
     if (!ch || !this.anshHome) return false;
-    this.errand = { phase: 'going', timer: 0, staySec, lookAt };
+    if (this.errand) leaveErrand(this.errand, false);
+    this.errand = { phase: 'going', timer: 0, staySec, lookAt, hooks, left: false };
     const facing = faceToward(spot, lookAt() ?? spot, ch.dir);
     this.walkTo(ch, standTarget('npc:ansh-errand', { ...spot, facing }));
     return true;
@@ -243,12 +258,14 @@ export class OfficeNpcs {
       if (errand.timer >= errand.staySec) {
         errand.phase = 'returning';
         this.walkTo(ch, home);
+        leaveErrand(errand, true);
       }
       return;
     }
     const step = stepWalk(ch, this.places.anshSeat, dt, world);
     if (step === 'unreachable') {
       // No way there (or back): he stays put at his desk.
+      leaveErrand(errand, false);
       this.errand = null;
       ch.zoneTarget = null;
       placeAt(ch, home);
@@ -258,6 +275,7 @@ export class OfficeNpcs {
     if (errand.phase === 'going') {
       errand.phase = 'staying';
       errand.timer = 0;
+      errand.hooks.onArrive?.();
       return;
     }
     // Back at his desk.
@@ -303,6 +321,13 @@ export class OfficeNpcs {
     ch.frame = 0;
     ch.frameTimer = 0;
   }
+}
+
+/** End an errand's stay for its owner, once. */
+function leaveErrand(errand: AnshErrand, stayed: boolean): void {
+  if (errand.left) return;
+  errand.left = true;
+  errand.hooks.onLeave?.(stayed);
 }
 
 /**

@@ -463,7 +463,8 @@ describe('Ansh wanders between thoughts', () => {
 
   it('walks to a place in the Server room, stays a while, and walks back to his desk', () => {
     const os = office(MAP_WITH_SERVER);
-    expect(os.anshWander(() => 0)).toBe(true);
+    // On offer: a chat with the Manager (weight 2), a place (1), a stretch (1).
+    expect(os.anshWander(() => 0.6)).toBe(true);
     const a = os.npcs.ansh!;
     let t = 0;
     while (!(inServer(a) && a.state === CharacterState.IDLE && !a.path.length)) {
@@ -481,7 +482,8 @@ describe('Ansh wanders between thoughts', () => {
 
   it('stretches nearby when the office has nowhere to go', () => {
     const os = office();
-    expect(os.anshWander(() => 0.5)).toBe(true);
+    // On offer: a chat with the Manager (weight 2) and a stretch (1).
+    expect(os.anshWander(() => 0.9)).toBe(true);
     expect(os.npcs.anshOut).toBe(true);
     run(os, 30);
     expect(at(os.npcs.ansh!)).toEqual([3, 3]);

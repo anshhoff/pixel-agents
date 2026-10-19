@@ -566,6 +566,113 @@ export const ANSH_BUBBLE_MS = 9_000;
 export const ANSH_WANDER_MIN_SEC = 60;
 export const ANSH_WANDER_RANGE_SEC = 90;
 export const ANSH_WANDER_STAY_SEC = 10;
+/**
+ * Ansh's errands between thoughts (engine/anshErrands.ts): the human things he
+ * does when the office has the furniture or the company for them. Each kind is
+ * drawn by its weight among the kinds the layout offers right now (a kind with
+ * no target is never drawn), never the same kind twice in a row when another
+ * is on offer. A place in the Café / Lounge / Server room and a stretch nearby
+ * stay on the list, quieter (nothing said).
+ */
+export const ANSH_ERRAND_WEIGHTS = {
+  pet: 3,
+  plant: 3,
+  coffee: 3,
+  reception: 2,
+  manager: 2,
+  window: 2,
+  board: 2,
+  fish: 2,
+  place: 1,
+  stretch: 1,
+} as const;
+/** How long he stays at each errand once there. */
+export const ANSH_ERRAND_STAY_SEC = {
+  pet: 6,
+  plant: 6,
+  coffee: 6,
+  reception: 8,
+  manager: 8,
+  window: 7,
+  board: 6,
+  fish: 6,
+} as const;
+/** A line shows this long; the other side of a chat answers this long after his. */
+export const ANSH_ERRAND_LINE_SEC = 4;
+export const ANSH_ERRAND_REPLY_AT_SEC = 2.5;
+/** Furniture an errand is for, by type prefix (wall items are stood under). */
+export const ANSH_PLANT_TYPE_PREFIXES: readonly string[] = [
+  'PLANT',
+  'LARGE_PLANT',
+  'CACTUS',
+  'HANGING_PLANT',
+];
+export const ANSH_WINDOW_TYPE_PREFIX = 'WINDOW_';
+export const ANSH_BOARD_TYPE_PREFIXES: readonly string[] = ['WHITEBOARD', 'NOTICE_BOARD'];
+export const ANSH_FISH_TANK_TYPE_PREFIX = 'FISH_TANK';
+/** Standing in front of an item: up to this many rows below its footprint
+ *  (a machine on a counter is reached from below the counter). */
+export const ANSH_ERRAND_REACH_ROWS = 2;
+/** Across the reception desk from the receptionist: at most this many tiles out. */
+export const ANSH_RECEPTION_REACH_TILES = 4;
+/** A petted pet sits still for him and shows a heart this long. */
+export const ANSH_PET_HEART_SEC = 3;
+/** Back from the coffee machine: the cup stays in hand this long. */
+export const ANSH_COFFEE_CUP_SEC = 45;
+/** The watering can: a drop falls from the spout every PERIOD seconds. */
+export const ANSH_WATERING_DROP_PERIOD_SEC = 0.6;
+export const ANSH_WATERING_CAN_COLOR = '#5f8f6a';
+export const ANSH_WATERING_CAN_DARK_COLOR = '#3e6347';
+export const ANSH_WATER_DROP_COLOR = '#7cc4f2';
+/** The receptionist's name over her lines. */
+export const RECEPTIONIST_LABEL = 'Receptionist';
+/** What he says (and hears). `{pet}` is the pet's name. */
+export const ANSH_PET_LINES: readonly string[] = [
+  "Who's a good {pet}?",
+  'Hey {pet}. Keeping an eye on the builds?',
+  '{pet}! Did you eat my snack again?',
+  'Break time, {pet}.',
+];
+export const ANSH_PLANT_LINES: readonly string[] = [
+  'There you go. Drink up.',
+  "Still alive. That's one of us.",
+  'Grow, little guy. Grow.',
+  'A bit of water, a bit of sun.',
+];
+export const ANSH_COFFEE_LINES: readonly string[] = [
+  'Coffee first. Then code review.',
+  'One more cup. Just one.',
+  'Ah. Fuel.',
+  'Who left the machine on empty?',
+];
+export const ANSH_WINDOW_LINES: Readonly<Record<'day' | 'dusk' | 'night', readonly string[]>> = {
+  day: ['Nice out today.', 'Should go for a walk later.', 'Sun is out. The agents are not.'],
+  dusk: ['Getting late already?', 'Look at that sky.', 'One more hour. Then home.'],
+  night: ['Dark out. Still shipping.', 'The city never sleeps. Neither do the agents.'],
+};
+export const ANSH_BOARD_LINES: readonly string[] = [
+  'Who wrote this?',
+  'Hm. That plan looks familiar.',
+  'Need to update this.',
+  'Okay. What did we promise this week?',
+];
+export const ANSH_FISH_LINES: readonly string[] = [
+  'Lunch time, fish.',
+  "Just a pinch. Don't tell the cat.",
+  'You two get along in there?',
+];
+/** A chat: his line, then the answer. */
+export const ANSH_RECEPTION_EXCHANGES: ReadonlyArray<readonly [string, string]> = [
+  ['Anyone interesting come in?', 'Just agents. Lots of agents.'],
+  ["How's the front desk?", 'Busy! They keep showing up.'],
+  ['Any packages for me?', "Nothing yet. I'll let you know."],
+  ['Quiet day?', 'For now. Knock on wood.'],
+];
+export const ANSH_MANAGER_EXCHANGES: ReadonlyArray<readonly [string, string]> = [
+  ['How are we tracking?', 'On track. Mostly.'],
+  ['Anything I should know?', "I'll have it in the report."],
+  ['Busy day?', 'Every day is a busy day.'],
+];
 /** NPCs at their desks flip between two frames this often (slower than typing). */
 export const NPC_IDLE_FRAME_SEC = 0.6;
 /** On a report for today, the Manager stands by Ansh's desk this long. */

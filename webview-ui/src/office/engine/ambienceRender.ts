@@ -19,6 +19,7 @@ import { metricsOf } from '../agentLook.js';
 import type { Character } from '../types.js';
 import { CharacterState, TILE_SIZE } from '../types.js';
 import { emptyRoomTiles, occupiedTiles, TimeOfDay, timeOfDay } from './ambience.js';
+import { wateringCanPixels } from './anshErrands.js';
 import { cupPixels } from './coffeeRuns.js';
 import { GLYPH_H, plateText, plateTextFit, plateTextPixels } from './namePlates.js';
 import { outlinePixels, waveHandPixels } from './receptionist.js';
@@ -108,6 +109,21 @@ export function renderCoffeeCup(
   zoom: number,
 ): void {
   for (const p of cupPixels(ch.dir, metricsOf(ch))) {
+    ctx.fillStyle = p.color;
+    fillAt(ctx, ch, p.dx, p.dy, offsetX, offsetY, zoom);
+  }
+}
+
+/** Ansh's watering can over a plant, `t` seconds into the watering (anshErrands.ts). */
+export function renderWateringCan(
+  ctx: CanvasRenderingContext2D,
+  ch: Character,
+  t: number,
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+): void {
+  for (const p of wateringCanPixels(ch.dir, t, metricsOf(ch))) {
     ctx.fillStyle = p.color;
     fillAt(ctx, ch, p.dx, p.dy, offsetX, offsetY, zoom);
   }

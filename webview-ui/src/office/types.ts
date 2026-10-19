@@ -283,6 +283,8 @@ export interface Character {
   enteredAt?: number;
   /** Back from a Café coffee run, cup in hand (coffeeRuns.ts). */
   carryingCup?: boolean;
+  /** Ansh watering a plant: seconds into it (the drops fall on it); absent otherwise. */
+  wateringCan?: number;
   /** The Entrance receptionist (an NPC, never an agent; see OfficeState.receptionist). */
   isReceptionist?: boolean;
   /** The receptionist's wave frame while she waves; absent otherwise. */

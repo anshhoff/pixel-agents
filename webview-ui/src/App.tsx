@@ -46,6 +46,7 @@ import { MobileShell } from './mobile/MobileShell.js';
 import { useMobileShell } from './mobile/useMobileShell.js';
 import { AnshBubbleOverlay } from './office/components/AnshBubbleOverlay.js';
 import { NpcOverlay } from './office/components/NpcOverlay.js';
+import { NpcSpeechOverlay } from './office/components/NpcSpeechOverlay.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
@@ -725,6 +726,14 @@ function App() {
 
           {/* Phase M NPCs (Ansh, the Manager): a name label on hover. */}
           <NpcOverlay
+            officeState={officeState}
+            containerRef={containerRef}
+            zoom={editor.zoom}
+            panRef={editor.panRef}
+          />
+
+          {/* Ansh's errands between thoughts: his line, and the answer in a chat. */}
+          <NpcSpeechOverlay
             officeState={officeState}
             containerRef={containerRef}
             zoom={editor.zoom}
