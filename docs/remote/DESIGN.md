@@ -13,8 +13,9 @@ Success:
 - A remote session shows up within ~2 s of its first activity, with a 💻/☁ badge.
 - Remote characters show tool activity, the permission bubble, Done/Waiting, and
   Subtask sub-characters; they come back by themselves after a server restart.
-- Only a single `POST /ingest` route is reachable from the internet. A leaked remote
-  key can post events and nothing else.
+- Only the relay's `POST /ingest` routes are reachable from the internet. A leaked remote
+  key can post events, and wait for the board's answer to permission requests in its
+  own (source-prefixed) sessions, and nothing else.
 
 Out of scope: claude.ai chats (no hooks), the stage track and done-today shelf (later).
 
@@ -78,6 +79,19 @@ The hooks list is the same 12 events Pixel Agents installs locally. Every entry 
   `CLAUDE_CODE_REMOTE=true`, so it is a no-op on local machines. It carries no key:
   the cloud environment's **network secret** (Bearer, host `<pc>.ts.net`) adds it, and
   that also lets the session reach the host without changing the network access level.
+
+### Approvals (added 2026-10-19)
+
+A sender's `PermissionRequest` gets a second, synchronous hook (`curl -sf -m 650`, hook
+`timeout: 660`) that posts to `/ingest/permission`. The relay authenticates it like any
+event, long-polls the board's `/api/permissions/wait` with the board token (session id
+prefixed, `pixel_source` stamped), and answers `200` with the hook's exact stdout or
+`204` (no answer: the sender's terminal decides). The output is rebuilt from validated
+fields only and ASCII-escaped; an AskUserQuestion's `updatedInput.answers` is built from
+the sender's original tool input. The sender hanging up (its terminal answered) aborts
+the board's wait. At most 32 waits are held at once. On the board, a relayed request
+only matches a relayed agent, and only its `Stop`/`SessionEnd` resolves it, since async
+events can arrive out of order.
 
 ## Known limits
 

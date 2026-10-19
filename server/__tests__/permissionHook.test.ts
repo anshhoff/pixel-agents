@@ -156,6 +156,58 @@ describe('permissionHookOutput (what the hook prints)', () => {
     expect(permissionHookOutput({ decision: { behavior: 'ask' } })).toBeNull();
     expect(permissionHookOutput({ decision: 'allow' })).toBeNull();
   });
+
+  describe('AskUserQuestion', () => {
+    const input = {
+      questions: [
+        {
+          question: 'Which meter?',
+          header: 'Meter',
+          multiSelect: false,
+          options: [{ label: 'Server room' }, { label: 'Limit meter' }],
+        },
+        {
+          question: 'Which hosts?',
+          multiSelect: true,
+          options: [{ label: 'PC' }, { label: 'Mac' }],
+        },
+      ],
+    };
+    const decisionOf = (answers: unknown) => {
+      const out = permissionHookOutput(
+        { decision: { behavior: 'allow', answers } },
+        'AskUserQuestion',
+        input,
+      );
+      return out === null ? null : JSON.parse(out).hookSpecificOutput.decision;
+    };
+
+    it('answers from the session own input: question text -> labels joined with ", "', () => {
+      expect(decisionOf([{ options: [1] }, { options: [0, 1], other: 'NAS' }])).toEqual({
+        behavior: 'allow',
+        updatedInput: {
+          ...input,
+          answers: { 'Which meter?': 'Limit meter', 'Which hosts?': 'PC, Mac, NAS' },
+        },
+      });
+    });
+
+    it('prints nothing when the answers are missing or do not fit', () => {
+      expect(decisionOf(undefined)).toBeNull();
+      expect(decisionOf([{ options: [0] }])).toBeNull();
+      expect(decisionOf([{ options: [0, 1] }, { options: [0] }])).toBeNull();
+      expect(decisionOf([{ options: [2] }, { options: [0] }])).toBeNull();
+      expect(decisionOf([{ options: [] }, { options: [0] }])).toBeNull();
+    });
+
+    it('a deny of a question is a plain deny', () => {
+      expect(
+        JSON.parse(
+          permissionHookOutput({ decision: { behavior: 'deny' } }, 'AskUserQuestion', input)!,
+        ).hookSpecificOutput.decision,
+      ).toEqual({ behavior: 'deny' });
+    });
+  });
 });
 
 describe('pickApprovalServer', () => {

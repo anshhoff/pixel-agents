@@ -7,16 +7,26 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import {
   addSource,
+  answersForToolInput,
   createRelayServer,
+  discoverBoard,
   discoverServers,
   findSource,
   forwardEvent,
+  forwardUsage,
   loadConfig,
   MAX_BODY_BYTES,
+  permissionHookOutput,
+  permissionWaitBody,
   removeSource,
   SENDER_EVENTS,
   senderHooks,
+  senderStatusLine,
+  statusLineText,
   transformEvent,
+  usageReportBody,
+  usageWindows,
+  waitOnBoard,
 } from './relay.mjs';
 
 const LAPTOP = { id: 'laptop', label: 'Laptop', kind: 'computer' };
@@ -407,5 +417,528 @@ describe('relay HTTP server', () => {
     });
     port = await listen(server);
     assert.equal(await request(port, { headers: auth(), body: event }), 204);
+  });
+});
+
+// ── Approvals ───────────────────────────────────────────────────────────────
+
+const QUESTION_INPUT = {
+  questions: [
+    {
+      question: 'Which meter should stay?',
+      header: 'Meter',
+      multiSelect: false,
+      options: [
+        { label: 'Server room', description: 'the wall display' },
+        { label: 'Limit meter', description: 'the branch' },
+      ],
+    },
+    {
+      question: 'Ship to which hosts?',
+      header: 'Hosts',
+      multiSelect: true,
+      options: [{ label: 'PC' }, { label: 'Mac' }, { label: 'Café' }],
+    },
+  ],
+};
+
+const PERMISSION_REQUEST = {
+  session_id: 'abc',
+  hook_event_name: 'PermissionRequest',
+  tool_name: 'Bash',
+  tool_input: { command: 'rm -rf build' },
+  cwd: '/Users/me/repo',
+  transcript_path: '/Users/me/.claude/projects/x/abc.jsonl',
+};
+
+describe('senderHooks approvals', () => {
+  it('adds a synchronous wait hook for PermissionRequest after the async event hook', () => {
+    const hooks = senderHooks({ url: URL_, cloud: false });
+    assert.equal(hooks.PermissionRequest.length, 2);
+    assert.equal(hooks.PermissionRequest[0].hooks[0].async, true);
+    const wait = hooks.PermissionRequest[1].hooks[0];
+    assert.equal(wait.async, undefined);
+    assert.equal(wait.timeout, 660);
+    assert.equal(
+      wait.command,
+      `curl -sf -m 650 -X POST -H 'Content-Type: application/json'` +
+        ` -H "Authorization: Bearer $(cat ~/.pixel-agents/ingest-key)"` +
+        ` --data-binary @- '${URL_}/permission' 2>/dev/null; exit 0`,
+    );
+    for (const event of SENDER_EVENTS.filter((e) => e !== 'PermissionRequest')) {
+      assert.equal(hooks[event].length, 1);
+    }
+  });
+
+  it('--no-approvals leaves PermissionRequest async only', () => {
+    const hooks = senderHooks({ url: URL_, cloud: false, approvals: false });
+    assert.equal(hooks.PermissionRequest.length, 1);
+  });
+
+  it('cloud and powershell senders get the wait hook too', () => {
+    const cloud = senderHooks({ url: URL_, cloud: true }).PermissionRequest[1].hooks[0];
+    assert.ok(cloud.command.startsWith('[ "$CLAUDE_CODE_REMOTE" = "true" ] || exit 0;'));
+    assert.equal(cloud.command.includes('Authorization'), false);
+    const ps = senderHooks({ url: `${URL_}/`, cloud: false, shell: 'powershell' })
+      .PermissionRequest[1].hooks[0];
+    assert.equal(ps.shell, 'powershell');
+    assert.ok(ps.command.includes(`-Uri '${URL_}/permission'`));
+    assert.ok(ps.command.includes('-TimeoutSec 650'));
+    assert.ok(ps.command.includes('if ($r.StatusCode -eq 200)'));
+    assert.equal(/[\r\n"]/.test(ps.command), false);
+  });
+});
+
+describe('permissionWaitBody', () => {
+  it('namespaces the session, stamps the source, drops the transcript', () => {
+    const body = permissionWaitBody(PERMISSION_REQUEST, LAPTOP);
+    assert.equal(body.session_id, 'laptop:abc');
+    assert.equal(body.tool_name, 'Bash');
+    assert.deepEqual(body.tool_input, { command: 'rm -rf build' });
+    assert.equal(body.cwd, '/Users/me/repo');
+    assert.deepEqual(body.pixel_source, LAPTOP);
+    assert.equal(body.transcript_path, undefined);
+    assert.match(body.requestId, /^[0-9a-f-]{36}$/);
+  });
+
+  it("keeps an AskUserQuestion's options (the event path's depth limit would drop them)", () => {
+    const body = permissionWaitBody(
+      { ...PERMISSION_REQUEST, tool_name: 'AskUserQuestion', tool_input: QUESTION_INPUT },
+      LAPTOP,
+    );
+    assert.deepEqual(body.tool_input, QUESTION_INPUT);
+  });
+
+  it('rejects anything but a PermissionRequest with a session and tool', () => {
+    const bad = (patch) => permissionWaitBody({ ...PERMISSION_REQUEST, ...patch }, LAPTOP);
+    assert.equal(bad({ hook_event_name: 'Stop' }), null);
+    assert.equal(bad({ tool_name: '' }), null);
+    assert.equal(bad({ session_id: 5 }), null);
+    assert.equal(permissionWaitBody([], LAPTOP), null);
+  });
+});
+
+describe('permissionHookOutput', () => {
+  const parse = (text) => JSON.parse(text).hookSpecificOutput;
+
+  it('allow and deny, nothing else passed through', () => {
+    assert.deepEqual(parse(permissionHookOutput({ decision: { behavior: 'allow' } }, 'Bash', {})), {
+      hookEventName: 'PermissionRequest',
+      decision: { behavior: 'allow' },
+    });
+    const denied = parse(
+      permissionHookOutput(
+        {
+          decision: {
+            behavior: 'deny',
+            message: 'no',
+            updatedPermissions: [{ type: 'addRules' }],
+            interrupt: true,
+          },
+        },
+        'Bash',
+        {},
+      ),
+    );
+    assert.deepEqual(denied.decision, { behavior: 'deny', message: 'no' });
+  });
+
+  it('prints nothing for no decision or a bad one', () => {
+    assert.equal(permissionHookOutput({}, 'Bash', {}), null);
+    assert.equal(permissionHookOutput(null, 'Bash', {}), null);
+    assert.equal(permissionHookOutput({ decision: { behavior: 'ask' } }, 'Bash', {}), null);
+  });
+
+  it('answers a question from the ORIGINAL input, ASCII-escaped', () => {
+    const text = permissionHookOutput(
+      { decision: { behavior: 'allow', answers: [{ options: [0] }, { options: [2, 1] }] } },
+      'AskUserQuestion',
+      QUESTION_INPUT,
+    );
+    assert.equal(/[^\x20-\x7e]/.test(text), false);
+    const { decision } = parse(text);
+    assert.deepEqual(decision.updatedInput, {
+      ...QUESTION_INPUT,
+      answers: {
+        'Which meter should stay?': 'Server room',
+        'Ship to which hosts?': 'Mac, Café',
+      },
+    });
+  });
+
+  it('a question allowed without fitting answers prints nothing', () => {
+    const out = (answers) =>
+      permissionHookOutput(
+        { decision: { behavior: 'allow', answers } },
+        'AskUserQuestion',
+        QUESTION_INPUT,
+      );
+    assert.equal(out(undefined), null);
+    assert.equal(out([{ options: [0] }]), null); // one short
+    assert.equal(out([{ options: [0, 1] }, { options: [0] }]), null); // two on single-select
+    assert.equal(out([{ options: [5] }, { options: [0] }]), null); // out of range
+    assert.equal(out([{ options: [] }, { options: [0] }]), null); // unanswered
+  });
+});
+
+describe('answersForToolInput', () => {
+  it('appends "Other" text after the chosen labels', () => {
+    assert.deepEqual(
+      answersForToolInput(QUESTION_INPUT, [
+        { options: [], other: '  Both  ' },
+        { options: [0], other: 'NAS' },
+      ]),
+      { 'Which meter should stay?': 'Both', 'Ship to which hosts?': 'PC, NAS' },
+    );
+  });
+});
+
+describe('discoverBoard', () => {
+  it('prefers the newest standalone server', () => {
+    const home = tmpDir();
+    const dir = path.join(home, '.pixel-agents', 'servers');
+    fs.mkdirSync(dir, { recursive: true });
+    const write = (name, value) => fs.writeFileSync(path.join(dir, name), JSON.stringify(value));
+    write('vscode.json', { port: 1, pid: process.pid, token: 'v', startedAt: 30 });
+    write('old.json', { port: 2, pid: process.pid, token: 'o', startedAt: 10, standalone: {} });
+    write('new.json', { port: 3, pid: process.pid, token: 'n', startedAt: 20, standalone: {} });
+    try {
+      assert.deepEqual(discoverBoard(home), { port: 3, token: 'n' });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('waitOnBoard', () => {
+  it('posts to the board wait route with its token and returns its answer', async () => {
+    let seen;
+    const board = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        seen = { url: req.url, auth: req.headers.authorization, body: JSON.parse(body) };
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ decision: { behavior: 'allow' } }));
+      });
+    });
+    const port = await listen(board);
+    try {
+      const answer = await waitOnBoard({ requestId: 'r1' }, { port, token: 'tok' });
+      assert.deepEqual(answer, { decision: { behavior: 'allow' } });
+      assert.equal(seen.url, '/api/permissions/wait');
+      assert.equal(seen.auth, 'Bearer tok');
+      assert.equal(seen.body.requestId, 'r1');
+    } finally {
+      board.close();
+    }
+  });
+
+  it('aborting ends the board request; no board or a dead one is null', async () => {
+    let closed;
+    const closedOnBoard = new Promise((resolve) => (closed = resolve));
+    const board = http.createServer((req) => {
+      req.resume();
+      req.socket.on('close', closed);
+    });
+    const port = await listen(board);
+    try {
+      const controller = new AbortController();
+      const pending = waitOnBoard({ requestId: 'r2' }, { port, token: 't' }, controller.signal);
+      setTimeout(() => controller.abort(), 50);
+      assert.equal(await pending, null);
+      await closedOnBoard;
+    } finally {
+      board.close();
+    }
+    assert.equal(await waitOnBoard({}, undefined), null);
+    assert.equal(await waitOnBoard({}, { port: 1, token: 't' }), null);
+  });
+});
+
+function requestWithBody(port, { path: p, headers = {}, body }) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port, method: 'POST', path: p, headers },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf-8');
+        res.on('data', (c) => (text += c));
+        res.on('end', () => resolve({ status: res.statusCode, body: text }));
+      },
+    );
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+describe('relay permission route', () => {
+  let home;
+  let key;
+  let server;
+  let port;
+  let waited;
+  let answer;
+
+  const start = async (opts = {}) => {
+    server = createRelayServer({
+      getConfig: () => loadConfig(home),
+      forward: () => {},
+      waitForDecision: (body, signal) => {
+        waited.push({ body, signal });
+        return typeof answer === 'function' ? answer(signal) : answer;
+      },
+      ...opts,
+    });
+    port = await listen(server);
+  };
+
+  beforeEach(async () => {
+    home = tmpDir();
+    key = addSource(home, LAPTOP);
+    waited = [];
+    answer = { decision: { behavior: 'allow' } };
+    await start();
+  });
+
+  afterEach(() => {
+    server.closeAllConnections?.();
+    server.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  const auth = () => ({ authorization: `Bearer ${key}`, 'content-type': 'application/json' });
+  const body = JSON.stringify(PERMISSION_REQUEST);
+  const openWait = () => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      method: 'POST',
+      path: '/ingest/permission',
+      headers: auth(),
+    });
+    req.on('error', () => {});
+    req.end(body);
+    return req;
+  };
+
+  for (const p of ['/ingest/permission', '/permission']) {
+    it(`answers 200 with the hook output on ${p}`, async () => {
+      const res = await requestWithBody(port, { path: p, headers: auth(), body });
+      assert.equal(res.status, 200);
+      assert.deepEqual(JSON.parse(res.body).hookSpecificOutput.decision, { behavior: 'allow' });
+      assert.equal(waited[0].body.session_id, 'laptop:abc');
+    });
+  }
+
+  it('204 when the board has no answer', async () => {
+    answer = {};
+    const res = await requestWithBody(port, { path: '/ingest/permission', headers: auth(), body });
+    assert.deepEqual(res, { status: 204, body: '' });
+  });
+
+  it('401 without a key, 400 for a non-PermissionRequest', async () => {
+    assert.equal((await requestWithBody(port, { path: '/ingest/permission', body })).status, 401);
+    const stop = JSON.stringify({ session_id: 'abc', hook_event_name: 'Stop' });
+    const res = await requestWithBody(port, {
+      path: '/ingest/permission',
+      headers: auth(),
+      body: stop,
+    });
+    assert.equal(res.status, 400);
+    assert.equal(waited.length, 0);
+  });
+
+  it('the sender going away aborts the board wait', async () => {
+    let aborted;
+    const abortSeen = new Promise((resolve) => (aborted = resolve));
+    answer = (signal) =>
+      new Promise((resolve) => {
+        signal.addEventListener('abort', () => {
+          aborted();
+          resolve(null);
+        });
+      });
+    const req = openWait();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    req.destroy();
+    await abortSeen;
+  });
+
+  it('past the wait cap, answers 204 without waiting', async () => {
+    server.close();
+    answer = () => new Promise(() => {});
+    await start({ maxWaits: 1 });
+    const first = openWait();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const res = await requestWithBody(port, { path: '/ingest/permission', headers: auth(), body });
+    assert.equal(res.status, 204);
+    assert.equal(waited.length, 1);
+    first.destroy();
+  });
+
+  it('no permission route without waitForDecision', async () => {
+    server.close();
+    await start({ waitForDecision: undefined });
+    const res = await requestWithBody(port, { path: '/ingest/permission', headers: auth(), body });
+    assert.equal(res.status, 404);
+  });
+});
+
+// ── Usage ───────────────────────────────────────────────────────────────────
+
+const HOUR_S = 3600;
+const nowS = () => Math.floor(Date.now() / 1000);
+const statusInput = (limits) => ({
+  session_id: 'abc',
+  cwd: '/Users/me/secret-repo',
+  transcript_path: '/Users/me/.claude/projects/x/abc.jsonl',
+  model: { id: 'claude-opus-5-5', display_name: 'Opus 5.5' },
+  cost: { total_cost_usd: 1.23 },
+  rate_limits: limits,
+});
+
+describe('usage', () => {
+  it('usageWindows keeps live windows only; usageReportBody carries numbers only', () => {
+    const resets5 = nowS() + HOUR_S;
+    const resets7 = nowS() + 24 * HOUR_S;
+    const windows = usageWindows(
+      statusInput({
+        five_hour: { used_percentage: 46.7, resets_at: resets5 },
+        seven_day: { used_percentage: 140, resets_at: resets7 },
+      }),
+    );
+    assert.deepEqual(windows, {
+      fiveHour: { usedPercentage: 46.7, resetsAt: resets5 * 1000 },
+      sevenDay: { usedPercentage: 100, resetsAt: resets7 * 1000 },
+    });
+    assert.deepEqual(usageReportBody(windows), {
+      rate_limits: {
+        five_hour: { used_percentage: 46.7, resets_at: resets5 * 1000 },
+        seven_day: { used_percentage: 100, resets_at: resets7 * 1000 },
+      },
+    });
+    assert.equal(usageWindows(statusInput(undefined)), undefined);
+    assert.equal(
+      usageWindows(statusInput({ five_hour: { used_percentage: 5, resets_at: nowS() - 10 } })),
+      undefined,
+    );
+    assert.equal(usageWindows(statusInput({ five_hour: { used_percentage: '5' } })), undefined);
+  });
+
+  it('statusLineText: model, then the usage, ASCII only', () => {
+    const input = statusInput({});
+    const windows = {
+      fiveHour: { usedPercentage: 46.9, resetsAt: Date.now() + 3_600_000 },
+      sevenDay: { usedPercentage: 12, resetsAt: Date.now() + 86_400_000 },
+    };
+    const line = statusLineText(input, windows);
+    assert.match(line, /^Opus 5\.5 \| 5h 46% \(resets .+\) \| 7d 12%$/);
+    assert.equal(/[^\x20-\x7e]/.test(line), false);
+    assert.equal(statusLineText(input, undefined), 'Opus 5.5');
+    assert.equal(statusLineText({ model: { display_name: 'Opus  X' } }, undefined), 'OpusX');
+  });
+
+  it('senderStatusLine posts to /usage and prints the answer; sender-config shape', () => {
+    assert.deepEqual(senderStatusLine({ url: URL_ }), {
+      type: 'command',
+      command:
+        `curl -sf -m 3 -X POST -H 'Content-Type: application/json'` +
+        ` -H "Authorization: Bearer $(cat ~/.pixel-agents/ingest-key)"` +
+        ` --data-binary @- '${URL_}/usage' 2>/dev/null; exit 0`,
+      padding: 0,
+    });
+    const ps = senderStatusLine({ url: URL_, shell: 'powershell' });
+    assert.equal(ps.shell, 'powershell');
+    assert.ok(ps.command.includes(`-Uri '${URL_}/usage'`));
+    assert.equal(/[\r\n"]/.test(ps.command), false);
+    assert.throws(() => senderStatusLine({ url: 'http://x/ingest' }));
+  });
+
+  describe('relay usage route', () => {
+    let home;
+    let key;
+    let server;
+    let port;
+    let reports;
+
+    beforeEach(async () => {
+      home = tmpDir();
+      key = addSource(home, LAPTOP);
+      reports = [];
+      server = createRelayServer({
+        getConfig: () => loadConfig(home),
+        forward: () => {},
+        forwardUsage: (body) => {
+          reports.push(body);
+        },
+      });
+      port = await listen(server);
+    });
+
+    afterEach(() => {
+      server.close();
+      fs.rmSync(home, { recursive: true, force: true });
+    });
+
+    const auth = () => ({ authorization: `Bearer ${key}`, 'content-type': 'application/json' });
+
+    for (const p of ['/ingest/usage', '/usage']) {
+      it(`answers the line and forwards only the windows on ${p}`, async () => {
+        const resets = nowS() + HOUR_S;
+        const res = await requestWithBody(port, {
+          path: p,
+          headers: auth(),
+          body: JSON.stringify(
+            statusInput({ five_hour: { used_percentage: 23, resets_at: resets } }),
+          ),
+        });
+        assert.equal(res.status, 200);
+        assert.match(res.body, /^Opus 5\.5 \| 5h 23% \(resets .+\)\n$/);
+        assert.deepEqual(reports, [
+          {
+            rate_limits: {
+              five_hour: { used_percentage: 23, resets_at: resets * 1000 },
+              seven_day: undefined,
+            },
+          },
+        ]);
+        assert.equal(JSON.stringify(reports).includes('secret-repo'), false);
+      });
+    }
+
+    it('no usage: prints the model, forwards nothing', async () => {
+      const res = await requestWithBody(port, {
+        path: '/ingest/usage',
+        headers: auth(),
+        body: JSON.stringify(statusInput(undefined)),
+      });
+      assert.deepEqual(res, { status: 200, body: 'Opus 5.5\n' });
+      assert.equal(reports.length, 0);
+    });
+
+    it('needs the key', async () => {
+      const res = await requestWithBody(port, { path: '/ingest/usage', body: '{}' });
+      assert.equal(res.status, 401);
+    });
+  });
+
+  it('forwardUsage posts to /api/usage with the token', async () => {
+    let seen;
+    const board = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        seen = { url: req.url, auth: req.headers.authorization, body: JSON.parse(body) };
+        res.end();
+      });
+    });
+    const port = await listen(board);
+    try {
+      await forwardUsage({ rate_limits: {} }, [{ port, token: 'tok' }]);
+      assert.deepEqual(seen, { url: '/api/usage', auth: 'Bearer tok', body: { rate_limits: {} } });
+    } finally {
+      board.close();
+    }
   });
 });

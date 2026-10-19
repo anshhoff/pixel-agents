@@ -652,6 +652,19 @@ export interface PermissionPending {
   tool: string;
   detail: string;
   since: number;
+  questions?: PermissionQuestion[];
+}
+
+export interface PermissionQuestion {
+  question: string;
+  header?: string;
+  multiSelect: boolean;
+  options: PermissionQuestionOption[];
+}
+
+export interface PermissionQuestionOption {
+  label: string;
+  description?: string;
 }
 
 export interface PermissionResolved {
@@ -890,9 +903,15 @@ export interface AnswerPermission {
   type: 'answerPermission';
   requestId: string;
   behavior: PermissionBehavior;
+  answers?: PermissionAnswer[];
 }
 
 export type PermissionBehavior = 'allow' | 'deny';
+
+export interface PermissionAnswer {
+  options: number[];
+  other?: string;
+}
 
 export interface RequestTimeReport {
   type: 'requestTimeReport';

@@ -107,7 +107,8 @@ describe('usage meter placeholder', () => {
 
   it('says why the display is blank otherwise', () => {
     expect(usagePlaceholder({ meter: 'on' })).toMatch(/waiting for Claude Code/);
-    expect(usagePlaceholder({ meter: 'off' })).toMatch(/Settings/);
+    expect(usagePlaceholder({ meter: 'off' })).toMatch(/click to turn on/);
+    expect(usagePlaceholder({ meter: 'off' }, true)).toMatch(/private link/);
     expect(usagePlaceholder({ ...live, meter: 'off' })).toMatch(/off/);
     expect(usagePlaceholder({ meter: 'foreign' })).toMatch(/own status line/);
     expect(usagePlaceholder({ meter: 'unreadable' })).toMatch(/unreadable/);

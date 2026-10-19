@@ -59,7 +59,11 @@ import { overlayProjection } from './office/projection.js';
 import { getPetCount } from './office/sprites/petSpriteData.js';
 import { EditTool, type OfficeLayout, TILE_SIZE } from './office/types.js';
 import { ApprovalCard } from './permissions/ApprovalCard.js';
-import { approvalAgentLabel } from './permissions/approvalState.js';
+import {
+  agentClickAction,
+  approvalAgentLabel,
+  remoteSetupHint,
+} from './permissions/approvalState.js';
 import { usePermissionApprovals } from './permissions/usePermissionApprovals.js';
 import { isBrowserRuntime, isE2E } from './runtime.js';
 import { NoticeBoardOverlay } from './signals/NoticeBoardOverlay.js';
@@ -159,10 +163,6 @@ function App() {
   // Needs-you inbox: agentLink / agentLimit (and the paused flag the office routes on).
   useInboxMessages(getOfficeState);
 
-  // Permission requests local sessions are waiting on the board to answer.
-  const approvals = usePermissionApprovals();
-  const { agentIds: approvalAgentIds, open: openApproval } = approvals;
-
   // Show migration notice once layout reset is detected
   const [migrationNoticeDismissed, setMigrationNoticeDismissed] = useState(false);
   const showMigrationNotice = layoutWasReset && !migrationNoticeDismissed;
@@ -172,6 +172,9 @@ function App() {
   const [isHooksInfoOpen, setIsHooksInfoOpen] = useState(false);
   const [hooksTooltipDismissed, setHooksTooltipDismissed] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState(false);
+  // The machine of a relayed session clicked while asking with no card to
+  // open: the hint says why (agentClickAction 'setupHint').
+  const [setupHintMachine, setSetupHintMachine] = useState<string | null>(null);
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
 
   // Background agents get a Remote Workers tile instead of a character, so
@@ -400,6 +403,12 @@ function App() {
   // Browser board only; while editing, T is the editor's toggle-state key.
   const tv = useTvMode({ enabled: isBrowserRuntime, keysEnabled: !editor.isEditMode });
   const { enter: enterTvMode } = tv;
+
+  // Permission requests (and AskUserQuestion) sessions are waiting on the
+  // board to answer. In TV mode on a board that may answer, each one opens
+  // its own card: nothing on the TV invites the click that would.
+  const approvals = usePermissionApprovals(tv.tvMode && !officeReadOnly);
+  const { agentIds: approvalAgentIds, open: openApproval } = approvals;
   const enterTv = useCallback(() => {
     // The editor's panels are controls too, and its tile actions would still
     // fire on a click: leave it first (as its own Esc does; unsaved edits stay
@@ -455,9 +464,20 @@ function App() {
       // If clicked agent is a sub-agent, focus the parent's terminal instead
       const os = getOfficeState();
       const focusId = os.terminalOwnerOf(agentId);
-      // An agent waiting on an approval opens its card instead.
-      if (approvalAgentIds.has(focusId)) {
+      // An agent waiting on an approval opens its card instead; a relayed one
+      // asking with no card (its computer never waits on the board) says why.
+      const machine = os.agentSources.get(focusId)?.label;
+      const action = agentClickAction({
+        hasPending: approvalAgentIds.has(focusId),
+        machine,
+        needsPermission: os.characters.get(focusId)?.bubbleType === 'permission',
+      });
+      if (action === 'card') {
         openApproval(focusId);
+        return;
+      }
+      if (action === 'setupHint' && machine !== undefined) {
+        setSetupHintMachine(machine);
         return;
       }
       transport.send({ type: 'focusAgent', id: focusId });
@@ -763,6 +783,7 @@ function App() {
             zoom={editor.zoom}
             panRef={editor.panRef}
             hidden={editor.isEditMode}
+            readOnly={officeReadOnly}
           />
           <TimelineCard
             officeState={officeState}
@@ -1016,6 +1037,26 @@ function App() {
         </>
       )}
 
+      {/* A relayed session asking in its own terminal only: why there's no card. */}
+      <Modal
+        isOpen={setupHintMachine !== null}
+        onClose={() => setSetupHintMachine(null)}
+        title="🔐 Answer it on that computer"
+        zIndex={60}
+      >
+        <div
+          className="flex flex-col gap-6 px-10 pb-6 max-w-[560px] text-sm"
+          data-testid="approval-setup-hint"
+        >
+          {setupHintMachine !== null &&
+            remoteSetupHint(setupHintMachine).map((line) => (
+              <p key={line} className="m-0">
+                {line}
+              </p>
+            ))}
+        </div>
+      </Modal>
+
       {/* Approval card: top level, like the modals below (see there). */}
       <ApprovalCard
         card={approvals.card}
@@ -1025,6 +1066,7 @@ function App() {
             ? approvalAgentLabel(
                 officeState.characters.get(approvals.card.request.agentId)?.directoryName,
                 agentTitles[approvals.card.request.agentId],
+                officeState.agentSources.get(approvals.card.request.agentId)?.label,
               )
             : ''
         }

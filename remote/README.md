@@ -67,6 +67,9 @@ It must stay awake: while it sleeps or is off, the board is down and events sent
 
 6. On the second monitor, open `http://127.0.0.1:3100` (no token) and press **F11**.
    A tab without the token is read-only, which is what a wall display wants.
+   To approve and answer questions from the wall display, open the private `?token=...` URL instead and add `&tv=1`
+   (or press **T**): in TV mode every pending approval or question opens its own card. Closing a card leaves that
+   request to the terminal; click the agent to open it again.
 
 ## 2. Public address (Tailscale Funnel)
 
@@ -181,8 +184,8 @@ Sections 1 and 2 work on a Mac with these changes. Run everything in Terminal fr
    - cloud repos: the committed `.claude/settings.json` hooks, and the network secret's **Allowed website**.
 4. The PC is now a sender like any other computer (section 3): add a `pc` source, save its key in
    `%USERPROFILE%\.pixel-agents\ingest-key`, and merge `sender-config` into the PC's `~/.claude/settings.json`
-   (add `--shell powershell` if the PC has no Git Bash). Its sessions show as 💻, without a context gauge,
-   team detection, or board approvals; those need the transcript, which stays on the PC.
+   (add `--shell powershell` if the PC has no Git Bash). Its sessions show as 💻, without a context gauge
+   or team detection; those need the transcript, which stays on the PC. Board approvals work (see section 3).
 
 ## 3. Another computer
 
@@ -218,7 +221,21 @@ note at the end of this section. Use one source per computer.
 
 5. Start a new Claude Code session there. A 💻 character appears on the board.
 
-Every hook is `async: true` and uses `curl -m 5`, so sessions never wait, even when this PC is off.
+Every event hook is `async: true` and uses `curl -m 5`, so sessions never wait, even when this PC is off.
+
+**Approvals from the board.** `PermissionRequest` also gets a second, synchronous hook that posts to
+`https://<host>/ingest/permission` and waits for the board (up to 10 minutes). The terminal's own dialog is up the whole
+time; whichever answers first wins. Allow / Deny on the board, or the options of a multiple-choice question (Claude's
+`AskUserQuestion`), go back to that session. When the board can't answer (this PC off, approvals switched off, nobody
+answers) the hook prints nothing and the terminal decides, as before. Answering in the terminal ends the hook, and the
+board's card closes. Leave it out with `sender-config ... --no-approvals`. Already set up? Re-run `sender-config` and
+add the new second `PermissionRequest` entry (the one without `"async": true`) to that computer's settings.
+
+**Usage meter.** `sender-config` also prints a `statusLine` (computers only). Claude Code tells only a status line the
+subscription's 5-hour and weekly usage, so this one posts its input to `https://<host>/ingest/usage`; the relay passes
+the two usage numbers (nothing else: no paths, no session) to the board's meter and answers with the line to show,
+`Opus 5.5 | 5h 23% (resets 6:30 PM) | 7d 41%`. Offline, the status line is empty. It **replaces** any status line that
+computer already has; skip it with `--no-usage`. Put it at the top level of `~/.claude/settings.json`, beside `hooks`.
 
 **Windows without Git Bash.** Use PowerShell hooks instead (Windows PowerShell 5.1 or PowerShell 7).
 Steps 3 and 5 stay the same.

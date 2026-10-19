@@ -103,8 +103,9 @@ export function inboxLabel(agent: Pick<InboxAgent, 'id' | 'title' | 'repo' | 'ma
 
 /**
  * The inbox. A paused agent is never "waiting on you": it goes to the paused
- * group whatever its status. Otherwise a pending permission outranks a live
- * question, which outranks a finished turn.
+ * group whatever its status. Otherwise a live question outranks a pending
+ * permission (an AskUserQuestion raises a permission prompt of its own, and
+ * is still a question), which outranks a finished turn.
  */
 export function buildInbox(agents: Iterable<InboxAgent>, now: number): Inbox {
   const waiting: InboxRow[] = [];
@@ -123,12 +124,12 @@ export function buildInbox(agents: Iterable<InboxAgent>, now: number): Inbox {
     }
     let reason: WaitReason | null = null;
     let since: number | undefined;
-    if (agent.permission) {
-      reason = 'permission';
-      since = agent.permissionSince;
-    } else if (agent.asking) {
+    if (agent.asking) {
       reason = 'question';
       since = agent.askingSince;
+    } else if (agent.permission) {
+      reason = 'permission';
+      since = agent.permissionSince;
     } else if (agent.status === 'waiting') {
       reason = 'done';
       since = agent.waitingSince;

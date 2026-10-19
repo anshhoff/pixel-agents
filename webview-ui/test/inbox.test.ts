@@ -65,13 +65,19 @@ describe('buildInbox', () => {
     expect(inbox.paused).toEqual([]);
   });
 
-  it('ranks a permission over a question over a finished turn for one agent', () => {
-    const inbox = buildInbox(
+  it('ranks a question over a permission over a finished turn for one agent', () => {
+    // A live AskUserQuestion raises its own permission prompt: it is a question.
+    const both = buildInbox(
       [agent(1, { status: 'waiting', permission: true, asking: true, waitingSince: NOW - MIN })],
       NOW,
     );
-    expect(inbox.waiting).toHaveLength(1);
-    expect(inbox.waiting[0].reason).toBe('permission');
+    expect(both.waiting).toHaveLength(1);
+    expect(both.waiting[0].reason).toBe('question');
+    const permission = buildInbox(
+      [agent(1, { status: 'waiting', permission: true, waitingSince: NOW - MIN })],
+      NOW,
+    );
+    expect(permission.waiting[0].reason).toBe('permission');
   });
 
   it('dates a wait it never saw start from now, never in the future', () => {

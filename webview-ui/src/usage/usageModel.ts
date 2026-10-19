@@ -112,8 +112,11 @@ export function usageRows(state: UsageMeterClientState, now: number): UsageRow[]
 /**
  * What the display shows instead of bars, or null when it shows the bars:
  * the meter is off, refused, or on but waiting for Claude Code's first report.
+ * Off, it says how to turn it on from where the viewer is: a board that may
+ * change settings turns it on with a click on the display itself (Settings is
+ * out of reach in TV mode); a read-only one needs the private link.
  */
-export function usagePlaceholder(state: UsageMeterClientState): string | null {
+export function usagePlaceholder(state: UsageMeterClientState, readOnly = false): string | null {
   switch (state.meter) {
     case 'on':
       return state.updatedAt === undefined ? 'USAGE · waiting for Claude Code' : null;
@@ -122,7 +125,9 @@ export function usagePlaceholder(state: UsageMeterClientState): string | null {
     case 'unreadable':
       return 'USAGE · settings.json unreadable';
     case 'off':
-      return 'USAGE · off (Settings › Usage Meter)';
+      return readOnly
+        ? 'USAGE · off (turn on from the private link)'
+        : 'USAGE · off · click to turn on';
     default:
       return null;
   }

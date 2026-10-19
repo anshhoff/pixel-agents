@@ -23,7 +23,7 @@ import { overlayProjection } from '../office/projection.js';
 import { ZoneLabel } from '../office/zones.js';
 import type { UsageLevel } from './usageModel.js';
 import { usageMeterRect, usagePlaceholder, usageRows, usageTooltip } from './usageModel.js';
-import { useUsageMeter } from './usageStore.js';
+import { setUsageMeterEnabled, useUsageMeter } from './usageStore.js';
 
 const LEVEL_COLORS: Record<UsageLevel, string> = {
   ok: USAGE_METER_OK,
@@ -45,6 +45,8 @@ interface UsageMeterOverlayProps {
   panRef: React.RefObject<{ x: number; y: number }>;
   /** Hidden while the layout editor is open. */
   hidden: boolean;
+  /** Read-only board: an "off" display can't be clicked on. */
+  readOnly: boolean;
 }
 
 export function UsageMeterOverlay({
@@ -53,6 +55,7 @@ export function UsageMeterOverlay({
   zoom,
   panRef,
   hidden,
+  readOnly,
 }: UsageMeterOverlayProps) {
   const usage = useUsageMeter();
   // Follow pan and zoom (and the reset countdown): re-render every frame while
@@ -86,7 +89,10 @@ export function UsageMeterOverlay({
     dpr,
   );
   const px = zoom / dpr; // CSS px per sprite px
-  const placeholder = usagePlaceholder(usage);
+  const placeholder = usagePlaceholder(usage, readOnly);
+  // Off on a board that may change settings: the display is the switch (the
+  // same request as Settings › Usage Meter; the server re-reports the truth).
+  const clickToTurnOn = usage.meter === 'off' && !readOnly;
   const rowH = (rect.h - FRAME_PX * 2) / 2;
 
   return (
@@ -102,7 +108,10 @@ export function UsageMeterOverlay({
         boxSizing: 'border-box',
         fontSize: FONT_PX * px,
         color: USAGE_METER_TEXT,
+        cursor: clickToTurnOn ? 'pointer' : undefined,
       }}
+      onClick={clickToTurnOn ? () => setUsageMeterEnabled(true) : undefined}
+      role={clickToTurnOn ? 'button' : undefined}
       title={placeholder ?? usageTooltip(usage, now)}
       aria-label={placeholder ?? usageTooltip(usage, now)}
       data-testid="usage-meter"

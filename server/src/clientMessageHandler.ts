@@ -229,7 +229,7 @@ export function handleClientMessage(
 
     case 'answerPermission':
       // Privileged only, like everything past the read-only gate above.
-      ctx.approvals?.answer(msg.requestId, msg.behavior, ctx.client);
+      ctx.approvals?.answer(msg.requestId, msg.behavior, ctx.client, msg.answers);
       break;
 
     case 'requestDiagnostics':

@@ -114,9 +114,10 @@ interface ToolOverlayProps {
   /** Phone layout: with always-show on, unfocused labels shrink to their
    *  activity line (agentLabel.ts labelDensity). */
   compactLabels: boolean;
-  /** Agents with a permission request waiting on the board: their label
-   *  always shows, reads APPROVAL_LABEL_TEXT, and opens the card on click. */
-  approvalAgentIds?: ReadonlySet<number>;
+  /** Agents with a permission request (or question) waiting on the board,
+   *  each with the text its label reads instead of its activity
+   *  (agentsWithPending). The label always shows and opens the card on click. */
+  approvalAgentIds?: ReadonlyMap<number, string>;
   onApprovalClick?: (id: number) => void;
 }
 
@@ -406,7 +407,7 @@ export function ToolOverlay({
     const subHasPermission = isSub && ch.bubbleType === 'permission';
     let activityText: string;
     if (needsApproval) {
-      activityText = APPROVAL_LABEL_TEXT;
+      activityText = approvalAgentIds?.get(id) ?? APPROVAL_LABEL_TEXT;
     } else if (asleep) {
       activityText = sleepLabel(sleep.idleSince, now);
     } else if (hasWaitingBubble && ch.waitingAwaitingInput) {

@@ -18,6 +18,7 @@ import {
   PERMISSION_WAIT_PATH,
 } from '../../../../permissions/constants.js';
 import { approvalsSwitchedOff } from '../../../../permissions/killSwitch.js';
+import { answersForToolInput, QUESTION_TOOL_NAME } from '../../../../permissions/questions.js';
 import type { ServerConfig, ServerTarget } from '../../../../serverConfig.js';
 import { LEGACY_SERVER_JSON_PATH, readLegacyServer, readRegistry } from './serverRegistry.js';
 
@@ -245,19 +246,39 @@ export function pickApprovalServer(registry: ServerConfig[]): ServerConfig | und
 
 /**
  * The exact stdout for a board answer, or null when the server's response is
- * not a valid decision. Built from scratch out of the two validated fields, so
+ * not a valid decision. Built from scratch out of the validated fields, so
  * nothing else the server sent (an "always allow" rule, rewritten input) can
- * ever reach Claude Code.
+ * ever reach Claude Code. An AskUserQuestion is the one input the board may
+ * fill in: its allow must carry answers, and `updatedInput` is this session's
+ * OWN tool input plus the `answers` map built from it (questions.ts).
  */
-export function permissionHookOutput(response: unknown): string | null {
+export function permissionHookOutput(
+  response: unknown,
+  toolName?: unknown,
+  toolInput?: unknown,
+): string | null {
   if (response === null || typeof response !== 'object') return null;
   const decision = (response as { decision?: unknown }).decision;
   if (decision === null || typeof decision !== 'object') return null;
-  const { behavior, message } = decision as { behavior?: unknown; message?: unknown };
+  const { behavior, message, answers } = decision as {
+    behavior?: unknown;
+    message?: unknown;
+    answers?: unknown;
+  };
   if (behavior !== 'allow' && behavior !== 'deny') return null;
-  const out: { behavior: 'allow' | 'deny'; message?: string } = { behavior };
+  const out: {
+    behavior: 'allow' | 'deny';
+    message?: string;
+    updatedInput?: Record<string, unknown>;
+  } = { behavior };
   if (behavior === 'deny' && typeof message === 'string' && message.length > 0) {
     out.message = message.slice(0, 1000);
+  }
+  if (behavior === 'allow' && toolName === QUESTION_TOOL_NAME) {
+    // "allow" alone answers nothing: no usable answers, no output.
+    const map = answersForToolInput(toolInput, answers);
+    if (!map) return null;
+    out.updatedInput = { ...(toolInput as Record<string, unknown>), answers: map };
   }
   return JSON.stringify({
     hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: out },
@@ -357,7 +378,11 @@ async function boardDecision(
     cwd: data.cwd,
   });
   const body = JSON.stringify({ ...request, requestId: randomUUID() });
-  return permissionHookOutput(await waitOnServer(server, body, sid));
+  return permissionHookOutput(
+    await waitOnServer(server, body, sid),
+    data.tool_name,
+    data.tool_input,
+  );
 }
 
 /** Write to stdout and wait for it to flush (a pipe write can be async, and

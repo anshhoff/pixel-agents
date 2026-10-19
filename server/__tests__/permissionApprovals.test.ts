@@ -271,20 +271,125 @@ describe('PermissionApprovals', () => {
     expect(broadcasts.at(-1)).toMatchObject({ outcome: 'expired' });
   });
 
-  it('never registers a relayed remote session (by payload or by agent)', async () => {
-    const { store, approvals, broadcasts } = setup();
-    expect(await approvals.wait({ ...request(), remote: true })).toEqual({});
-    store.set(
-      2,
-      agent({
-        id: 2,
-        sessionId: 'sess-remote',
-        remoteSource: { id: 'cloud', label: 'Cloud', kind: 'cloud' },
-      }),
-    );
-    expect(await approvals.wait(request('req-2', 'sess-remote'))).toEqual({});
-    expect(broadcasts.filter((m) => m.type === 'permissionPending')).toEqual([]);
-    expect(approvals.pendingMessages()).toEqual([]);
+  describe('relayed remote sessions', () => {
+    const MAC = { id: 'mac', label: 'Mac', kind: 'computer' as const };
+    function withRemoteAgent() {
+      const ctx = setup();
+      ctx.store.set(2, agent({ id: 2, sessionId: 'mac:s1', remoteSource: MAC }));
+      return ctx;
+    }
+
+    it('a relayed request waits on the board and gets the answer', async () => {
+      const { approvals, broadcasts } = withRemoteAgent();
+      const wait = approvals.wait({ ...request('req-r', 'mac:s1'), remote: true });
+      expect(broadcasts).toEqual([
+        expect.objectContaining({ type: 'permissionPending', requestId: 'req-r', id: 2 }),
+      ]);
+      expect(approvals.answer('req-r', 'deny')).toBe(true);
+      expect((await wait).decision).toEqual({ behavior: 'deny', message: BOARD_DENY_MESSAGE });
+    });
+
+    it('a relayed request never matches a local agent, nor a local one a relayed agent', async () => {
+      const { approvals, broadcasts } = withRemoteAgent();
+      expect(await approvals.wait({ ...request('req-a', 'sess-1'), remote: true })).toEqual({});
+      expect(await approvals.wait(request('req-b', 'mac:s1'))).toEqual({});
+      expect(broadcasts.filter((m) => m.type === 'permissionPending')).toEqual([]);
+    });
+
+    it('only Stop or SessionEnd from the relayed session settles it (async hooks reorder)', async () => {
+      const { approvals } = withRemoteAgent();
+      const wait = approvals.wait({ ...request('req-r', 'mac:s1'), remote: true });
+      const event = (name: string, remote = true) => ({
+        hook_event_name: name,
+        session_id: 'mac:s1',
+        ...(remote ? { pixel_source: MAC } : {}),
+      });
+      approvals.observeHookEvent(event('PreToolUse'));
+      approvals.observeHookEvent(event('PostToolUse'));
+      approvals.observeHookEvent(event('Stop', false)); // not relayed: not this session
+      expect((await settled(wait)).done).toBe(false);
+      approvals.observeHookEvent(event('Stop'));
+      expect(await wait).toEqual({});
+    });
+  });
+
+  describe('AskUserQuestion', () => {
+    const QUESTIONS = {
+      questions: [
+        {
+          question: 'Which meter?',
+          header: 'Meter',
+          multiSelect: false,
+          options: [{ label: 'Server room', description: 'wall' }, { label: 'Limit meter' }],
+        },
+        {
+          question: 'Which hosts?',
+          header: 'Hosts',
+          multiSelect: true,
+          options: [{ label: 'PC' }, { label: 'Mac' }],
+        },
+      ],
+    };
+    const ask = (requestId = 'req-q') => ({
+      ...request(requestId),
+      toolName: 'AskUserQuestion',
+      toolInput: QUESTIONS,
+    });
+
+    it('announces the questions with the request', async () => {
+      const { approvals, broadcasts } = setup();
+      void approvals.wait(ask());
+      expect(broadcasts[0]).toMatchObject({
+        type: 'permissionPending',
+        tool: 'AskUserQuestion',
+        questions: [
+          {
+            question: 'Which meter?',
+            header: 'Meter',
+            multiSelect: false,
+            options: [{ label: 'Server room', description: 'wall' }, { label: 'Limit meter' }],
+          },
+          {
+            question: 'Which hosts?',
+            multiSelect: true,
+            options: [{ label: 'PC' }, { label: 'Mac' }],
+          },
+        ],
+      });
+      approvals.dispose();
+    });
+
+    it('allow needs answers that fit; the decision carries them and the log reads them', async () => {
+      const { approvals, logged } = setup();
+      const wait = approvals.wait(ask());
+      expect(approvals.answer('req-q', 'allow')).toBe(false);
+      expect(
+        approvals.answer('req-q', 'allow', undefined, [{ options: [0, 1] }, { options: [0] }]),
+      ).toBe(false);
+      expect(approvals.answer('req-q', 'allow', undefined, [{ options: [0] }])).toBe(false);
+      const answers = [{ options: [1] }, { options: [1, 0], other: ' NAS ' }];
+      expect(approvals.answer('req-q', 'allow', 'phone', answers)).toBe(true);
+      expect((await wait).decision).toEqual({
+        behavior: 'allow',
+        answers: [{ options: [1] }, { options: [0, 1], other: 'NAS' }],
+      });
+      expect(logged[0].detail).toBe('Meter: Limit meter; Hosts: PC, Mac, NAS');
+    });
+
+    it('deny needs no answers', async () => {
+      const { approvals } = setup();
+      const wait = approvals.wait(ask());
+      expect(approvals.answer('req-q', 'deny')).toBe(true);
+      expect((await wait).decision?.behavior).toBe('deny');
+    });
+
+    it('a malformed AskUserQuestion stays an ordinary Allow / Deny request', async () => {
+      const { approvals, broadcasts } = setup();
+      const wait = approvals.wait({ ...ask(), toolInput: { questions: 'nope' } });
+      expect(broadcasts[0].questions).toBeUndefined();
+      expect(approvals.answer('req-q', 'allow')).toBe(true);
+      expect((await wait).decision).toEqual({ behavior: 'allow' });
+    });
   });
 
   it('answers at once with no decision when switched off', async () => {

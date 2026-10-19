@@ -1796,8 +1796,9 @@ components:
         PermissionRequest hook is waiting on this board for an answer. Sent
         to every connected office, and again in the connect snapshot while it
         is still pending. Answered with `answerPermission` (privileged
-        clients only); ends with `permissionResolved`. Relayed remote
-        sessions never produce one.
+        clients only); ends with `permissionResolved`. A relayed remote
+        session produces one too when its sender waits on the board (the
+        relay's permission route).
       type: object
       additionalProperties: false
       required: [type, requestId, id, tool, detail, since]
@@ -1822,6 +1823,58 @@ components:
         since:
           type: number
           description: When the request arrived (ms since epoch).
+        questions:
+          type: array
+          description: >-
+            Set when the tool is AskUserQuestion: the questions to answer.
+            The card offers their options instead of Allow, and the answer
+            carries `answers`.
+          items:
+            $ref: '#/components/schemas/PermissionQuestion'
+
+    PermissionQuestion:
+      description: One AskUserQuestion question, as the approval card shows it.
+      type: object
+      additionalProperties: false
+      required: [question, multiSelect, options]
+      properties:
+        question:
+          type: string
+        header:
+          type: string
+          description: Short chip label Claude gave the question.
+        multiSelect:
+          type: boolean
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionQuestionOption'
+
+    PermissionQuestionOption:
+      description: One choice of a PermissionQuestion.
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label:
+          type: string
+        description:
+          type: string
+
+    PermissionAnswer:
+      description: >-
+        The answer to one PermissionQuestion: the chosen options by index
+        (one for a single-select question), and/or free text for "Other".
+      type: object
+      additionalProperties: false
+      required: [options]
+      properties:
+        options:
+          type: array
+          items:
+            type: integer
+        other:
+          type: string
 
     PermissionResolved:
       description: |
@@ -2294,6 +2347,14 @@ components:
           type: string
         behavior:
           $ref: '#/components/schemas/PermissionBehavior'
+        answers:
+          type: array
+          description: >-
+            For an AskUserQuestion request with `allow`: one answer per
+            question, in the request's order. Required there, ignored
+            elsewhere.
+          items:
+            $ref: '#/components/schemas/PermissionAnswer'
 
     PermissionBehavior:
       description: The answer to a permission request.

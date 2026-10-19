@@ -1,7 +1,9 @@
 import type {
+  PermissionAnswer,
   PermissionBehavior,
   PermissionOutcome,
   PermissionPending,
+  PermissionQuestion,
   PermissionResolved,
 } from '../../../core/src/messages.js';
 import type { AgentStateStore } from '../agentStateStore.js';
@@ -13,12 +15,16 @@ import {
   PERMISSION_WAIT_MS,
 } from './constants.js';
 import { formatPermissionDetail, shortPermissionDetail } from './permissionDetail.js';
+import { answersSummary, parseQuestions, questionShapes, validateAnswers } from './questions.js';
 
-/** What the hook script prints back to Claude Code. Only these two fields,
- *  ever: no "always allow", no updatedPermissions, no rewritten input. */
+/** What the hook script turns into its output. Only these fields, ever: no
+ *  "always allow", no updatedPermissions, no rewritten input. `answers` (an
+ *  AskUserQuestion's choices, by index) becomes `updatedInput.answers`, built
+ *  by the hook from the session's own tool input (see questions.ts). */
 export interface PermissionDecision {
   behavior: PermissionBehavior;
   message?: string;
+  answers?: PermissionAnswer[];
 }
 
 /** The long-poll's answer: a decision, or nothing (the terminal decides). */
@@ -34,7 +40,8 @@ export interface PermissionWaitRequest {
   toolInput: unknown;
   /** The session's working directory (the payload's `cwd`), for the log. */
   cwd?: string;
-  /** Set when the payload came through remote/relay. Never answered here. */
+  /** Set when the payload came through remote/relay (its session id carries
+   *  the source's prefix, so it can only ever match a relayed agent). */
   remote?: boolean;
 }
 
@@ -75,6 +82,13 @@ const SESSION_MOVED_ON_EVENTS = new Set([
   'SessionEnd',
 ]);
 
+/** The same for a relayed session. Its events come from async hooks and can
+ *  overtake each other, so the PreToolUse that came BEFORE the dialog (or a
+ *  parallel tool's PostToolUse) may land after the request: only the turn or
+ *  the session ending counts. The sender's hook going away (the terminal
+ *  answered) still settles the request, through the relay's closed wait. */
+const REMOTE_SESSION_MOVED_ON_EVENTS = new Set(['Stop', 'SessionEnd']);
+
 interface PendingRequest {
   requestId: string;
   sessionId: string;
@@ -82,6 +96,9 @@ interface PendingRequest {
   agentId?: number;
   tool: string;
   detail: string;
+  /** AskUserQuestion: what to answer. Allowing it then needs answers. */
+  questions?: PermissionQuestion[];
+  remote: boolean;
   since: number;
   cwd?: string;
   timer: ReturnType<typeof setTimeout>;
@@ -98,7 +115,8 @@ interface PendingRequest {
  *    Stop or SessionEnd after the request), its agent left the board, or the
  *    hook went away. The wait returns no decision.
  *  - `expired`: nobody answered within the wait window. No decision.
- * Relayed remote sessions are never registered: approvals are LOCAL only.
+ * A relayed remote session waits the same way, through the relay's
+ * permission route (remote/relay), when its sender is set up for it.
  */
 export class PermissionApprovals {
   private readonly pending = new Map<string, PendingRequest>();
@@ -124,11 +142,11 @@ export class PermissionApprovals {
   /**
    * Hold one request until it is answered, superseded, or expires. Resolves
    * with no decision whenever the board should stay out of it: switched off,
-   * a remote session, a requestId already in use, or no LOCAL agent for the
-   * session within PERMISSION_AGENT_RESOLVE_MS.
+   * a requestId already in use, or no agent for the session within
+   * PERMISSION_AGENT_RESOLVE_MS.
    */
   wait(request: PermissionWaitRequest): Promise<PermissionWaitResult> {
-    if (this.disposed || request.remote || this.options.isSwitchedOff?.()) {
+    if (this.disposed || this.options.isSwitchedOff?.()) {
       return Promise.resolve({});
     }
     if (this.pending.has(request.requestId)) return Promise.resolve({});
@@ -138,6 +156,8 @@ export class PermissionApprovals {
         sessionId: request.sessionId,
         tool: request.toolName,
         detail: formatPermissionDetail(request.toolName, request.toolInput),
+        questions: parseQuestions(request.toolName, request.toolInput),
+        remote: request.remote === true,
         since: this.now(),
         cwd: request.cwd,
         timer: setTimeout(() => this.finish(req, 'expired', {}), this.waitMs),
@@ -156,34 +176,48 @@ export class PermissionApprovals {
     const name = event.hook_event_name;
     const sessionId = event.session_id;
     if (typeof name !== 'string' || typeof sessionId !== 'string') return;
-    if (!SESSION_MOVED_ON_EVENTS.has(name) || remoteSourceOf(event)) return;
+    const remote = remoteSourceOf(event) !== undefined;
+    const movedOn = remote ? REMOTE_SESSION_MOVED_ON_EVENTS : SESSION_MOVED_ON_EVENTS;
+    if (!movedOn.has(name)) return;
     for (const req of [...this.pending.values()]) {
-      if (req.sessionId === sessionId) this.finish(req, 'answeredInTerminal', {});
+      if (req.sessionId === sessionId && req.remote === remote) {
+        this.finish(req, 'answeredInTerminal', {});
+      }
     }
   }
 
   /**
    * A privileged client's answer. Returns whether it settled a pending
    * request. Only reachable past the read-only gate in handleClientMessage;
-   * validated here again because the payload is client-supplied.
+   * validated here again because the payload is client-supplied. A question
+   * is allowed only WITH answers that fit it: "allow" alone answers nothing.
    */
-  answer(requestId: unknown, behavior: unknown, client?: string): boolean {
+  answer(requestId: unknown, behavior: unknown, client?: string, answers?: unknown): boolean {
     if (typeof requestId !== 'string') return false;
     if (behavior !== 'allow' && behavior !== 'deny') return false;
     const req = this.pending.get(requestId);
     // An announced request only: one still resolving its agent was never shown.
     if (!req || req.agentId === undefined) return false;
+    let validAnswers: PermissionAnswer[] | undefined;
+    if (behavior === 'allow' && req.questions) {
+      validAnswers = validateAnswers(questionShapes(req.questions), answers) ?? undefined;
+      if (!validAnswers) return false;
+    }
     const decision: PermissionDecision =
-      behavior === 'allow'
-        ? { behavior: 'allow' }
-        : { behavior: 'deny', message: BOARD_DENY_MESSAGE };
+      behavior === 'deny'
+        ? { behavior: 'deny', message: BOARD_DENY_MESSAGE }
+        : validAnswers
+          ? { behavior: 'allow', answers: validAnswers }
+          : { behavior: 'allow' };
     this.finish(req, behavior === 'allow' ? 'allowed' : 'denied', { decision });
     this.options.log?.({
       time: new Date(this.now()).toISOString(),
       agentId: req.agentId,
       repo: this.repoOf(req),
       tool: req.tool,
-      detail: shortPermissionDetail(req.detail),
+      detail: shortPermissionDetail(
+        req.questions && validAnswers ? answersSummary(req.questions, validAnswers) : req.detail,
+      ),
       decision: behavior,
       client,
     });
@@ -217,11 +251,7 @@ export class PermissionApprovals {
 
   private attachAgent(req: PendingRequest, deadline: number): void {
     if (this.pending.get(req.requestId) !== req) return; // already settled
-    const found = this.localAgentFor(req.sessionId);
-    if (found === 'remote') {
-      this.finish(req, 'answeredInTerminal', {});
-      return;
-    }
+    const found = this.agentFor(req.sessionId, req.remote);
     if (found !== undefined) {
       req.agentId = found;
       this.options.store.broadcast({ ...this.pendingMessage(req) });
@@ -235,12 +265,13 @@ export class PermissionApprovals {
   }
 
   /** The board agent for a session: a top-level agent wins over a teammate
-   *  sharing the session. 'remote' when the session is a relayed one. */
-  private localAgentFor(sessionId: string): number | 'remote' | undefined {
+   *  sharing the session. A relayed request only ever matches a relayed
+   *  agent, and a local one a local agent. */
+  private agentFor(sessionId: string, remote: boolean): number | undefined {
     let fallback: number | undefined;
     for (const [id, agent] of this.options.store) {
       if (agent.sessionId !== sessionId) continue;
-      if (agent.remoteSource) return 'remote';
+      if (!!agent.remoteSource !== remote) continue;
       if (agent.leadAgentId === undefined) return id;
       fallback ??= id;
     }
@@ -248,7 +279,7 @@ export class PermissionApprovals {
   }
 
   private pendingMessage(req: PendingRequest): PermissionPending {
-    return {
+    const msg: PermissionPending = {
       type: 'permissionPending',
       requestId: req.requestId,
       id: req.agentId!,
@@ -256,6 +287,8 @@ export class PermissionApprovals {
       detail: req.detail,
       since: req.since,
     };
+    if (req.questions) msg.questions = req.questions;
+    return msg;
   }
 
   private repoOf(req: PendingRequest): string {

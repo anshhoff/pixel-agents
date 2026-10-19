@@ -44,6 +44,12 @@ export const PERMISSION_AGENT_RESOLVE_POLL_MS = 250;
 export const PERMISSION_DETAIL_MAX_CHARS = 2_000;
 /** Lines of an Edit/Write/MultiEdit change shown under the file path. */
 export const PERMISSION_DETAIL_CHANGE_LINES = 20;
+/** AskUserQuestion on the card: limits on what is accepted and shown. */
+export const QUESTION_MAX_QUESTIONS = 8;
+export const QUESTION_MAX_OPTIONS = 20;
+export const QUESTION_TEXT_MAX_CHARS = 1_000;
+/** The free-text "Other" answer. */
+export const QUESTION_OTHER_MAX_CHARS = 2_000;
 /** Short detail written to approvals.log. */
 export const PERMISSION_LOG_DETAIL_MAX_CHARS = 200;
 
