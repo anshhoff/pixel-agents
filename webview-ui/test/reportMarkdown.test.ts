@@ -124,3 +124,26 @@ describe('safety', () => {
     expect(safeLinkHref('not a url')).toBeNull();
   });
 });
+
+describe('nested lists', () => {
+  it('nests indented items under the item above, any depth', () => {
+    const [list] = parseMarkdown(
+      '- **Task** — Done\n  - did a thing\n    - deeper\n  - and another\n- Next task',
+    );
+    if (list.type !== 'list') throw new Error('expected a list');
+    expect(list.items.map(inlineText)).toEqual(['Task — Done', 'Next task']);
+    const sub = list.sublists?.[0];
+    expect(sub?.items.map(inlineText)).toEqual(['did a thing', 'and another']);
+    expect(sub?.sublists?.[0]?.items.map(inlineText)).toEqual(['deeper']);
+    expect(list.sublists?.[1]).toBeNull();
+  });
+
+  it('leaves flat lists as they were', () => {
+    const [list] = parseMarkdown('- a\n- b');
+    expect(list).toEqual({
+      type: 'list',
+      ordered: false,
+      items: [[{ type: 'text', text: 'a' }], [{ type: 'text', text: 'b' }]],
+    });
+  });
+});

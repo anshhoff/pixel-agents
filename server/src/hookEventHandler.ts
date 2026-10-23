@@ -401,6 +401,11 @@ export class HookEventHandler {
         if (normEvent.usageLimit && getInboxTracker()?.tracks(this.agents)) {
           getInboxTracker()?.onUsageLimit(agentId, normEvent.usageLimit);
         }
+        // How the turn ended, in the agent's words, for the Manager's report.
+        // (StopFailure's is the API error, not a reply.)
+        if (event.hook_event_name === 'Stop' && typeof event.last_assistant_message === 'string') {
+          this.progress?.onTurnSummary(agentId, event.last_assistant_message);
+        }
         return this.handleStop(agent, agentId, normEvent.awaitingInput === true);
       case 'subagentTurnEnd':
         // Handles TeammateIdle AND TaskCompleted -- both normalize here. The normalized

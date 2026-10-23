@@ -2,8 +2,9 @@
  * AnshBrain: the user's own character, "Ansh", thinks about the office.
  *
  * Every ANSH_CHECK_INTERVAL_MS the office is boiled down to a compact situation
- * (each agent's repo, task title, status -- needs approval, waiting on Ansh,
- * failing, working, asleep, idle -- how long it has waited, today's totals).
+ * (each agent's repo, task title, status -- needs approval, on a break (the
+ * session limit cut it off), waiting on Ansh, failing, working, asleep, idle --
+ * how long it has waited, today's totals).
  * Its salient part is fingerprinted; while the fingerprint doesn't change
  * nothing happens, so a quiet office costs nothing. When it changes, and
  * ANSH_MIN_GAP_MS has passed since the last thought, and today's ANSH_DAILY_CAP
@@ -82,6 +83,8 @@ export interface AnshSources {
   failuresOf?: (agentId: number) => number;
   /** Put to sleep by the local session watcher. */
   isSleeping?: (agentId: number) => boolean;
+  /** Paused by the session limit (it waits in the Lounge until the reset). */
+  onLimitBreak?: (agentId: number) => boolean;
   /** Today's task totals. */
   todayTasks?: () => { done: number; open: number; waiting: number };
   /** Today's PRs and pushes. */
@@ -98,7 +101,15 @@ export interface AnshBrainOptions {
 }
 
 export type AgentStatus =
-  'needs approval' | 'waiting on Ansh' | 'failing' | 'working' | 'asleep' | 'idle';
+  | 'needs approval'
+  | 'on a break (limit)'
+  | 'waiting on Ansh'
+  | 'failing'
+  | 'working'
+  | 'asleep'
+  | 'idle';
+
+const ON_BREAK: AgentStatus = 'on a break (limit)';
 
 /** One agent as a thought sees it: a ref (A1, A2...) instead of any id or path. */
 export interface SituationAgent {
@@ -183,6 +194,7 @@ export function buildSituation(
     const busy = agent.activeToolNames.size > 0 || agent.currentHookToolId !== undefined;
     let status: AgentStatus;
     if (approval || agent.permissionSent) status = 'needs approval';
+    else if (sources.onLimitBreak?.(id)) status = ON_BREAK;
     else if (waitingSince !== undefined || agent.isWaiting) status = 'waiting on Ansh';
     else if (failures > 0) status = 'failing';
     else if (busy) status = 'working';
@@ -331,6 +343,11 @@ export function fallbackThought({ situation, idOf }: SituationWithIds): AnshMove
       targetId: idOf.get(failing.ref),
       say: say(`${name(failing)} keeps failing, ${failing.failuresInARow} in a row.`),
     };
+  }
+  const onBreak = situation.agents.filter((a) => a.status === ON_BREAK).length;
+  if (onBreak > 0) {
+    const who = onBreak === 1 ? '1 agent is' : `${onBreak} agents are`;
+    return { action: 'stay', say: say(`${who} on a break until the limit resets.`) };
   }
   const working = situation.agents.filter((a) => a.status === 'working').length;
   const { tasksDone, prs } = situation.today;
@@ -481,7 +498,9 @@ export class AnshBrain {
     this.thinking = true;
     this.broadcast(this.stateMessage());
     try {
-      const ai = anshClaudeEnabled(this.env) ? await this.askClaude(snap) : undefined;
+      // The session limit has agents on a break: claude would only fail on it too.
+      const limited = snap.situation.agents.some((a) => a.status === ON_BREAK);
+      const ai = anshClaudeEnabled(this.env) && !limited ? await this.askClaude(snap) : undefined;
       const move = ai ?? fallbackThought(snap);
       const thought: AnshThoughtEntry = {
         at: this.now(),

@@ -1360,9 +1360,12 @@ describe("clientMessageHandler: the Manager's tasks and reports", () => {
         dataDir,
         now: () => T0,
         env: {},
+        projectsRoot: null,
+        git: null,
+        publisher: null,
         runClaude: async () => {
           runs++;
-          return '## Done today\n- Wrote the docs';
+          return '## Overview\n- Wrote the docs\n===DETAILS===\n## docs\n- Wrote them';
         },
       },
     });
@@ -1416,7 +1419,8 @@ describe("clientMessageHandler: the Manager's tasks and reports", () => {
         type: 'report',
         date: TODAY,
         exists: true,
-        markdown: '## Done today\n- Wrote the docs',
+        markdown: '## Overview\n- Wrote the docs',
+        details: expect.stringMatching(/^## docs\s+- Wrote them/),
         generatedAt: T0,
         aiWritten: true,
       },

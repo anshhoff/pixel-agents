@@ -61,7 +61,7 @@ export function officeTools(office: OfficeView): McpTool[] {
       name: 'list_agents',
       title: 'List agents',
       description:
-        'Every agent in the office: id, repo, task, status (needs approval, waiting on Ansh -- ' +
+        'Every agent in the office: id, repo, task, status (needs approval, on a break (limit), waiting on Ansh -- ' +
         "the user -- failing, working, asleep, idle), what it's doing, how many minutes it has " +
         "waited, plus today's totals. Use the id with read_agent.",
       inputSchema: NO_ARGS,

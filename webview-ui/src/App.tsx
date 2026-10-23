@@ -45,6 +45,7 @@ import { useInboxMessages } from './inbox/inboxStore.js';
 import { MobileShell } from './mobile/MobileShell.js';
 import { useMobileShell } from './mobile/useMobileShell.js';
 import { AnshBubbleOverlay } from './office/components/AnshBubbleOverlay.js';
+import { LimitBreakOverlay } from './office/components/LimitBreakOverlay.js';
 import { NpcOverlay } from './office/components/NpcOverlay.js';
 import { NpcSpeechOverlay } from './office/components/NpcSpeechOverlay.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
@@ -754,6 +755,14 @@ function App() {
 
           {/* Ansh's errands between thoughts: his line, and the answer in a chat. */}
           <NpcSpeechOverlay
+            officeState={officeState}
+            containerRef={containerRef}
+            zoom={editor.zoom}
+            panRef={editor.panRef}
+          />
+
+          {/* The limit break: the sign over the Lounge and what is said there. */}
+          <LimitBreakOverlay
             officeState={officeState}
             containerRef={containerRef}
             zoom={editor.zoom}

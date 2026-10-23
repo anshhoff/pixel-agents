@@ -49,6 +49,7 @@ import {
   PROGRESS_CYCLE_GAP_MS,
 } from '../constants.js';
 import { toPathKey } from '../pathKey.js';
+import { commitMessageOf, todosFromTool, type WorkNoteKind } from '../tasks/workNotes.js';
 import type { AgentState } from '../types.js';
 import {
   classifyTool,
@@ -93,7 +94,10 @@ export type ProgressEvent =
   | { kind: 'pr'; agentId: number; at: number; pr: DailyPr }
   /** An active span closed by `waiting`: the ms added to activeMs, so clipped
    *  at midnight exactly as the totals are. */
-  | { kind: 'activeTime'; agentId: number; at: number; ms: number };
+  | { kind: 'activeTime'; agentId: number; at: number; ms: number }
+  /** What the work was, in words: a plan item, a commit subject, or how a turn
+   *  ended (the Stop hook's last reply). For the Manager's report (workNotes.ts). */
+  | { kind: 'note'; agentId: number; at: number; note: WorkNoteKind; text: string };
 
 export type ProgressObserver = (event: ProgressEvent) => void;
 
@@ -199,9 +203,18 @@ export class ProgressTracker {
       }
       this.emit({ kind: 'fileEdited', agentId, at: now, fileKey: key });
     }
+    for (const text of todosFromTool(toolName, input)) {
+      this.emit({ kind: 'note', agentId, at: now, note: 'todo', text });
+    }
     const phase = classifyTool(toolName, input);
     if (phase) this.advance(agentId, phase, now);
     if (dailyChanged) this.dailyChanged();
+  }
+
+  /** A turn ended with this reply (the Stop hook's last_assistant_message). */
+  onTurnSummary(agentId: number, text: string): void {
+    if (this.disposed || !this.store.has(agentId) || !text.trim()) return;
+    this.emit({ kind: 'note', agentId, at: this.now(), note: 'outcome', text });
   }
 
   /** A tool finished: a successful `git push` or `gh pr create` lands in today's totals. */
@@ -215,6 +228,8 @@ export class ProgressTracker {
     if (this.disposed || !agent || result.failed) return;
     const command = shellCommandOf(toolName, input);
     if (!command) return;
+    const commit = commitMessageOf(command);
+    if (commit) this.emit({ kind: 'note', agentId, at: this.now(), note: 'commit', text: commit });
     const pushed = isPushCommand(command);
     const opened = isPrCreateCommand(command);
     if (!pushed && !opened) return;

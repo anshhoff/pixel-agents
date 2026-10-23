@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import type { DailyPr, Report, Task, TaskStatus } from '../../../core/src/messages.js';
 import { TASKS_BOARD_WIDTH_PX, TASKS_BOARD_Z_INDEX } from '../constants.js';
 import { safePrUrl } from '../progress/progressFormat.js';
-import type { Block, Inline } from '../tasks/reportMarkdown.js';
-import { parseMarkdown } from '../tasks/reportMarkdown.js';
+import type { Block, Inline, ListBlock } from '../tasks/reportMarkdown.js';
+import { parseMarkdown, safeLinkHref } from '../tasks/reportMarkdown.js';
 import {
   boardSummary,
   clockTime,
@@ -201,22 +201,7 @@ function ReportMarkdown({ markdown }: { markdown: string }) {
             </div>
           );
         }
-        if (b.type === 'list') {
-          const items = b.items.map((item, j) => (
-            <li key={j}>
-              <InlineNodes nodes={item} />
-            </li>
-          ));
-          return b.ordered ? (
-            <ol key={i} className="m-0 pl-20 list-decimal flex flex-col gap-2">
-              {items}
-            </ol>
-          ) : (
-            <ul key={i} className="m-0 pl-20 list-disc flex flex-col gap-2">
-              {items}
-            </ul>
-          );
-        }
+        if (b.type === 'list') return <ReportList key={i} list={b} />;
         return (
           <p key={i} className="m-0">
             <InlineNodes nodes={b.children} />
@@ -224,6 +209,26 @@ function ReportMarkdown({ markdown }: { markdown: string }) {
         );
       })}
     </div>
+  );
+}
+
+/** A list and the lists nested under its items. */
+function ReportList({ list, nested = false }: { list: ListBlock; nested?: boolean }) {
+  const items = list.items.map((item, j) => {
+    const sub = list.sublists?.[j];
+    return (
+      <li key={j}>
+        <InlineNodes nodes={item} />
+        {sub && <ReportList list={sub} nested />}
+      </li>
+    );
+  });
+  const marker = list.ordered ? 'list-decimal' : nested ? 'list-[circle]' : 'list-disc';
+  const className = `m-0 pl-20 ${marker} flex flex-col gap-2${nested ? ' mt-2 text-text-muted' : ''}`;
+  return list.ordered ? (
+    <ol className={className}>{items}</ol>
+  ) : (
+    <ul className={className}>{items}</ul>
   );
 }
 
@@ -271,6 +276,25 @@ function ReportView({
         </div>
       )}
       {body}
+      {report?.exists && report.details && (
+        <details className="flex flex-col gap-8" data-testid="report-details">
+          <summary className="cursor-pointer text-sm text-accent-bright">Details by repo</summary>
+          <div className="pt-8">
+            <ReportMarkdown markdown={report.details} />
+          </div>
+        </details>
+      )}
+      {report?.exists && report.notionUrl && safeLinkHref(report.notionUrl) && (
+        <a
+          href={safeLinkHref(report.notionUrl) ?? undefined}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-sm text-accent-bright"
+          data-testid="report-notion-link"
+        >
+          Open the full status in Notion ↗
+        </a>
+      )}
       {report?.exists && report.generatedAt !== undefined && (
         <div className="text-2xs text-text-muted">
           {report.aiWritten ? 'Written by the Manager' : 'Template report'} ·{' '}

@@ -2,7 +2,9 @@
  * The fun phase's runtime (docs/office/DESIGN.md, phases E and F): festival
  * decorations, the 10:00 standup and 19:00 banner, whiteboard / library /
  * crowns, the week wall and growing plants, weather in the windows, the lo-fi
- * radio, smart pets, the fish tank, the printer, pizza and ping-pong.
+ * radio, smart pets, the fish tank, the printer, pizza and ping-pong — and
+ * the limit break (limitBreak.ts): agents the session limit cut off pass the
+ * time in the Lounge until it resets.
  *
  * OfficeState owns one and calls it at a few seams:
  *  - onMessage(msg)      every server message (useExtensionMessages)
@@ -16,6 +18,7 @@
 
 import type { DailyStats, Weather, WeekDay } from '../../../core/src/messages.js';
 import { isSettledAtZoneTarget } from '../office/engine/characters.js';
+import { faceToward } from '../office/engine/npcs.js';
 import { isSmoking } from '../office/engine/zoneEffects.js';
 import {
   getAnimationFrames,
@@ -39,6 +42,12 @@ import type { DecorInput, DecorPlacement, Festival } from './festivals.js';
 import { festivalDecorations, festivalOn, freeSurfaceTiles, localDateKey } from './festivals.js';
 import { getFunAudio } from './funAudio.js';
 import {
+  BREAK_ACTIVITY_MAX_SEC,
+  BREAK_ACTIVITY_MIN_SEC,
+  BREAK_CHAT_MAX_SEC,
+  BREAK_CHAT_MIN_SEC,
+  BREAK_LINE_SEC,
+  BREAK_STAND_RADIUS_TILES,
   BUSY_WINDOW_MS,
   CLAUDIO_CELEBRATE_SEC,
   CLAUDIO_GREET_SEC,
@@ -92,6 +101,8 @@ import {
   ritualDue,
   weekPrCount,
 } from './funRules.js';
+import type { BreakActivity, BreakSpeaker } from './limitBreak.js';
+import { breakLine, breakSignText, isBreakReason, pickBreakActivity } from './limitBreak.js';
 import type { PetWorld } from './smartPets.js';
 import { petRole, SmartPets } from './smartPets.js';
 
@@ -108,9 +119,21 @@ export interface FunHost {
   zoneRandom: () => number;
   /** Can the character walk to that place from where it stands? */
   canReach(ch: Character, target: { col: number; row: number; sit: boolean }): boolean;
+  /** The NPCs sitting with the limit break right now (they chat too). */
+  breakGuests?(): BreakGuest[];
 }
 
-export type BorrowKind = 'standup' | 'whiteboard' | 'library' | 'pizza' | 'pingpong';
+export type BorrowKind = 'standup' | 'whiteboard' | 'library' | 'pizza' | 'pingpong' | 'limitBreak';
+
+/** An NPC sitting with the limit break. */
+export type BreakGuest = 'ansh' | 'manager';
+
+/** A line said on the limit break (director clock). */
+export interface BreakLineShowing {
+  who: BreakSpeaker;
+  text: string;
+  until: number;
+}
 
 /** A character a ritual or pastime has borrowed from the destination engine. */
 export interface Borrow {
@@ -125,6 +148,9 @@ export interface Borrow {
   until: number;
   /** Whiteboard: the board's uid (it shows a drawing while someone stands there). */
   itemUid?: string;
+  /** Limit break: what it is doing, and for how long once there (seconds settled). */
+  activity?: BreakActivity;
+  staySec?: number;
 }
 
 interface PlacedItem {
@@ -203,6 +229,25 @@ export class FunDirector {
     endsAt: number;
     since: number | null;
   } | null = null;
+
+  // ── Limit break ──
+  /** Agents a session-type usage limit paused, with when it resets (epoch ms). */
+  private readonly limited = new Map<number, number | undefined>();
+  private readonly lastBreakActivity = new Map<number, BreakActivity>();
+  /** No place for it right now: try again from this director-clock time. */
+  private readonly breakRetryAt = new Map<number, number>();
+  /** On the break with a cup in hand (a coffee). */
+  private readonly breakCups = new Set<number>();
+  /** Lounge seats the NPCs hold on the break (no agent is given one). */
+  private readonly guestSeats = new Map<BreakGuest, ZoneTarget>();
+  /** The break was on at the last update (the pizza goes up / comes down on a change). */
+  private breakWasOn = false;
+  private breakChatAt = 0;
+  private lastBreakSpeaker: BreakSpeaker | null = null;
+  /** What is being said on the break. */
+  breakLines: BreakLineShowing[] = [];
+  private breakPizzaDecor: PlacedFurniture[] = [];
+  private breakPizzaTables: PlacedItem[] = [];
 
   // ── Pets ──
   private readonly pets = new SmartPets();
@@ -293,6 +338,13 @@ export class FunDirector {
       case 'agentClosed':
         this.forgetAgent(id);
         break;
+      case 'agentLimit':
+        if (msg.paused === true && isBreakReason(msg.reason)) {
+          this.limited.set(id, typeof msg.resetsAt === 'number' ? msg.resetsAt : undefined);
+        } else {
+          this.limited.delete(id);
+        }
+        break;
       case 'dailyStats':
         this.onDailyStats(msg as DailyStats);
         break;
@@ -325,6 +377,10 @@ export class FunDirector {
     this.lastShipAt.delete(id);
     this.lastPizzaVisit.delete(id);
     this.smokersSeen.delete(id);
+    this.limited.delete(id);
+    this.lastBreakActivity.delete(id);
+    this.breakRetryAt.delete(id);
+    this.breakCups.delete(id);
     this.borrows.delete(id);
     if (this.rally && (this.rally.a === id || this.rally.b === id)) this.endRally();
   }
@@ -389,6 +445,7 @@ export class FunDirector {
     }
 
     this.updateBorrows(dt);
+    this.updateLimitBreak(nowMs);
     this.updateRituals(now);
     if (this.clock >= this.quickCheckAt) {
       this.quickCheckAt = this.clock + 0.5;
@@ -448,6 +505,10 @@ export class FunDirector {
     }
     this.festivalCheckAt = -Infinity; // re-place decorations on the new layout
     this.pizzaKey = '';
+    // The break's pizza goes back on the new layout's tables (if the break is on).
+    this.breakWasOn = false;
+    this.breakPizzaDecor = [];
+    this.breakPizzaTables = [];
     this.dirty = true;
   }
 
@@ -587,7 +648,11 @@ export class FunDirector {
   }
 
   private animatedDecor(): PlacedFurniture[] {
-    if (this.decor.length === 0) return this.pizzaDecor;
+    const pizza =
+      this.breakPizzaDecor.length > 0
+        ? [...this.pizzaDecor, ...this.breakPizzaDecor]
+        : this.pizzaDecor;
+    if (this.decor.length === 0) return pizza;
     const flicker = Math.floor(this.clock / FESTIVAL_FLICKER_FRAME_SEC);
     const lit = this.decor.map((d, i) => {
       const frames = getAnimationFrames(d.type);
@@ -595,7 +660,7 @@ export class FunDirector {
         ? { ...d, type: frames[(flicker + i) % frames.length] }
         : d;
     });
-    return this.pizzaDecor.length > 0 ? [...lit, ...this.pizzaDecor] : lit;
+    return pizza.length > 0 ? [...lit, ...pizza] : lit;
   }
 
   /** Whiteboards someone stands drawing at. */
@@ -718,6 +783,11 @@ export class FunDirector {
         continue;
       }
       if (isSettledAtZoneTarget(ch) && ch.zoneTarget?.key === b.target.key) b.settledFor += dt;
+      if (b.kind === 'limitBreak') {
+        // Asleep doesn't end a break: a long wait for the reset may well doze off.
+        if (!this.onBreak(ch) || b.settledFor >= (b.staySec ?? 0)) this.release(id);
+        continue;
+      }
       let done = this.clock > b.until || !!ch.leaving || !!ch.isSleeping || this.permission.has(id);
       switch (b.kind) {
         case 'standup':
@@ -796,18 +866,20 @@ export class FunDirector {
     this.festivalCheckAt = -Infinity;
   }
 
+  /** The free place nearest `from` (the character by default) that it can walk to. */
   private nearestPlace<T extends ZonePlace | ZoneTarget>(
     ch: Character,
     places: readonly T[],
     taken: ReadonlySet<string>,
+    from: { col: number; row: number } = { col: ch.tileCol, row: ch.tileRow },
   ): T | null {
     const sorted = places
       .filter((p) => !taken.has(p.key) && !this.placeHeld(p, ch))
       .sort(
         (a, b) =>
-          Math.abs(a.col - ch.tileCol) +
-          Math.abs(a.row - ch.tileRow) -
-          (Math.abs(b.col - ch.tileCol) + Math.abs(b.row - ch.tileRow)),
+          Math.abs(a.col - from.col) +
+          Math.abs(a.row - from.row) -
+          (Math.abs(b.col - from.col) + Math.abs(b.row - from.row)),
       );
     for (const p of sorted.slice(0, 6)) {
       if (this.host.canReach(ch, p)) return p;
@@ -821,6 +893,7 @@ export class FunDirector {
       if (other.id !== ch.id && other.zoneTarget?.key === place.key) return true;
     }
     for (const [id, b] of this.borrows) if (id !== ch.id && b.target.key === place.key) return true;
+    for (const t of this.guestSeats.values()) if (t.key === place.key) return true;
     return false;
   }
 
@@ -859,6 +932,12 @@ export class FunDirector {
   }
 
   private startLibrary(ch: Character): void {
+    const spot = this.nearestPlace(ch, this.shelfSpots(), new Set());
+    if (spot) this.borrow(ch, 'library', spot);
+  }
+
+  /** Where one stands to read at a bookshelf (below or beside it); `zone` keeps to one room. */
+  private shelfSpots(zone?: ZoneLabel): ZoneTarget[] {
     const shelves = this.itemsWhere((t) => t.includes(FUN_TYPE.BOOKSHELF_PART));
     const spots: ZoneTarget[] = [];
     for (const s of shelves) {
@@ -881,11 +960,11 @@ export class FunDirector {
       ];
       for (const t of around) {
         if (!isWalkable(t.col, t.row, this.host.tileMap, this.host.blockedTiles)) continue;
+        if (zone !== undefined && this.zoneAt(t.col, t.row) !== zone) continue;
         spots.push(standSpot('Library', t.col, t.row, t.f));
       }
     }
-    const spot = this.nearestPlace(ch, spots, new Set());
-    if (spot) this.borrow(ch, 'library', spot);
+    return spots;
   }
 
   // ── Pastimes for idle agents ──
@@ -927,12 +1006,16 @@ export class FunDirector {
     }
   }
 
-  /** Start a rally on a ping-pong table (true when both players were sent). */
-  startRally(pair: [number, number], rng: () => number = this.host.zoneRandom): boolean {
+  /** Start a rally on a ping-pong table (true when both players were sent); `zone` keeps to one room. */
+  startRally(
+    pair: [number, number],
+    rng: () => number = this.host.zoneRandom,
+    zone?: ZoneLabel,
+  ): boolean {
     const a = this.host.characters.get(pair[0]);
     const b = this.host.characters.get(pair[1]);
     if (!a || !b) return false;
-    for (const table of this.itemsWhere((t) => t === FUN_TYPE.PING_PONG_TABLE)) {
+    for (const table of this.pingPongTables(zone)) {
       for (let dr = table.h - 1; dr >= 0; dr--) {
         const row = table.row + dr;
         const left = standSpot('PingPong', table.col - 1, row, Direction.RIGHT);
@@ -965,6 +1048,12 @@ export class FunDirector {
     return false;
   }
 
+  private pingPongTables(zone?: ZoneLabel): PlacedItem[] {
+    return this.itemsWhere((t) => t === FUN_TYPE.PING_PONG_TABLE).filter(
+      (t) => zone === undefined || this.zoneAt(t.col, t.row) === zone,
+    );
+  }
+
   private startPizzaVisit(ch: Character): boolean {
     const cafe = this.host.zones.zones.get(ZoneLabel.CAFE);
     if (!cafe) return false;
@@ -995,6 +1084,302 @@ export class FunDirector {
     const b = this.host.characters.get(r.b);
     if (!a || !b) return null;
     return { a, b, t: this.clock - r.since, table: r.table };
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // The limit break (limitBreak.ts)
+  // ════════════════════════════════════════════════════════════
+
+  /** On the break: paused by a session limit, top-level, and wanted by nothing else. */
+  private onBreak(ch: Character): boolean {
+    return (
+      this.limited.has(ch.id) &&
+      !ch.isSubagent &&
+      !ch.isActive &&
+      !ch.leaving &&
+      !ch.matrixEffect &&
+      !this.permission.has(ch.id) &&
+      !this.askingUser(ch.id)
+    );
+  }
+
+  /** The agents on the break right now (none without a Lounge). */
+  breakMembers(): Character[] {
+    if (!this.host.zones.zones.has(ZoneLabel.LOUNGE)) return [];
+    return [...this.host.characters.values()].filter((ch) => this.onBreak(ch));
+  }
+
+  /** The break is on: someone the session limit cut off is here, and there is a Lounge. */
+  get breakOn(): boolean {
+    return this.breakWasOn;
+  }
+
+  /** When the earliest of the break's limits resets (epoch ms), if any says. */
+  breakResetsAt(): number | undefined {
+    let earliest: number | undefined;
+    for (const ch of this.breakMembers()) {
+      const at = this.limited.get(ch.id);
+      if (at !== undefined && (earliest === undefined || at < earliest)) earliest = at;
+    }
+    return earliest;
+  }
+
+  /** The sign over the Lounge while the break is on: its text, and the top
+   *  middle of the room (tile units; `col` may be half a tile). */
+  breakSign(): { text: string; col: number; row: number } | null {
+    if (!this.breakWasOn) return null;
+    const tiles = this.host.zones.zones.get(ZoneLabel.LOUNGE)?.tiles ?? [];
+    if (tiles.length === 0) return null;
+    let left = Infinity;
+    let right = -Infinity;
+    let top = Infinity;
+    for (const t of tiles) {
+      left = Math.min(left, t.col);
+      right = Math.max(right, t.col);
+      top = Math.min(top, t.row);
+    }
+    return {
+      text: breakSignText(this.breakResetsAt(), this.host.nowMs()),
+      col: (left + right + 1) / 2,
+      row: top,
+    };
+  }
+
+  /** What is being said on the break right now. */
+  breakLinesShowing(): BreakLineShowing[] {
+    return this.breakLines.filter((l) => this.clock < l.until);
+  }
+
+  /**
+   * A Lounge seat near the group for an NPC joining the break, held for it
+   * (marked taken, so no agent is routed onto it) until releaseGuestSeat.
+   * The one it holds already, if any; null when the break is off or no seat
+   * is free and reachable.
+   */
+  claimGuestSeat(who: BreakGuest, ch: Character): ZoneTarget | null {
+    const held = this.guestSeats.get(who);
+    if (held) return held;
+    const lounge = this.host.zones.zones.get(ZoneLabel.LOUNGE);
+    if (!lounge || !this.breakWasOn) return null;
+    const seats = lounge.places.filter((p) => p.sit && !this.seatTaken(p, ch));
+    const seat = this.nearestPlace(ch, seats, new Set(), this.breakHub(ch));
+    if (!seat) return null;
+    this.guestSeats.set(who, seat);
+    const s = this.host.seats.get(seat.key);
+    if (s) s.assigned = true;
+    return seat;
+  }
+
+  releaseGuestSeat(who: BreakGuest): void {
+    const t = this.guestSeats.get(who);
+    if (!t) return;
+    this.guestSeats.delete(who);
+    const s = this.host.seats.get(t.key);
+    if (s) s.assigned = false;
+  }
+
+  /** A new layout: the seats and the NPCs are rebuilt, so nothing is held. */
+  forgetGuestSeats(): void {
+    this.guestSeats.clear();
+  }
+
+  /** Per frame: who is on the break, their next activity, the cups, the pizza, the chat. */
+  private updateLimitBreak(nowMs: number): void {
+    const members = this.breakMembers();
+    const on = members.length > 0;
+    if (on !== this.breakWasOn) {
+      this.breakWasOn = on;
+      this.refreshBreakPizza(on);
+      if (!on) {
+        this.breakLines = [];
+        this.lastBreakSpeaker = null;
+      }
+    }
+    for (const id of [...this.breakCups]) {
+      const b = this.borrows.get(id);
+      const ch = this.host.characters.get(id);
+      if (b?.kind === 'limitBreak' && b.activity === 'coffee') {
+        // In hand once sat down with it.
+        if (ch) ch.carryingCup = isSettledAtZoneTarget(ch) || undefined;
+      } else {
+        this.breakCups.delete(id);
+        if (ch) ch.carryingCup = undefined;
+      }
+    }
+    if (!on) return;
+    for (const ch of members) {
+      if (this.borrows.has(ch.id)) continue;
+      if (this.clock < (this.breakRetryAt.get(ch.id) ?? -Infinity)) continue;
+      if (!this.startBreakActivity(ch, members)) {
+        this.breakRetryAt.set(ch.id, this.clock + 2);
+      }
+    }
+    this.updateBreakChat(members, nowMs);
+  }
+
+  /** Send an agent on the break to its next activity. False: nowhere to go right now. */
+  private startBreakActivity(ch: Character, members: readonly Character[]): boolean {
+    const lounge = this.host.zones.zones.get(ZoneLabel.LOUNGE);
+    if (!lounge) return false;
+    const rng = this.host.zoneRandom;
+    const seats = lounge.places.filter((p) => p.sit && !this.seatTaken(p, ch));
+    const send = (activity: BreakActivity, target: ZoneTarget | null): boolean => {
+      if (!target) return false;
+      const staySec =
+        BREAK_ACTIVITY_MIN_SEC + rng() * (BREAK_ACTIVITY_MAX_SEC - BREAK_ACTIVITY_MIN_SEC);
+      this.borrow(ch, 'limitBreak', { ...target }, { activity, staySec, until: Infinity });
+      this.lastBreakActivity.set(ch.id, activity);
+      if (activity === 'coffee') this.breakCups.add(ch.id);
+      return true;
+    };
+    const seatNear = (at: { col: number; row: number }) =>
+      this.nearestPlace(ch, seats, new Set(), at);
+
+    const tries = new Map<BreakActivity, () => boolean>();
+    tries.set('sofa', () => {
+      const hub = this.breakHub(ch);
+      return send('sofa', seatNear(hub) ?? this.standNear(ch, lounge.tiles, hub));
+    });
+    const table = this.breakPizzaTables[0];
+    if (table && seats.length > 0) {
+      tries.set('pizza', () =>
+        send('pizza', seatNear({ col: table.col + table.w / 2, row: table.row + table.h / 2 })),
+      );
+    }
+    const mug = this.itemsWhere((t) => t === FUN_TYPE.COFFEE_MUG)
+      .filter((m) => this.zoneAt(m.col, m.row) === ZoneLabel.LOUNGE)
+      .sort(
+        (a, b) =>
+          Math.abs(a.col - ch.tileCol) +
+          Math.abs(a.row - ch.tileRow) -
+          (Math.abs(b.col - ch.tileCol) + Math.abs(b.row - ch.tileRow)),
+      )[0];
+    if (mug && seats.length > 0) tries.set('coffee', () => send('coffee', seatNear(mug)));
+    const shelves = this.shelfSpots(ZoneLabel.LOUNGE);
+    if (shelves.length > 0) {
+      tries.set('shelves', () => send('shelves', this.nearestPlace(ch, shelves, new Set())));
+    }
+    // A rally takes two: someone else on the break who is free or just sitting about.
+    const partner = members.find((o) => {
+      if (o.id === ch.id || !this.free(o)) return false;
+      const b = this.borrows.get(o.id);
+      return !b || (b.kind === 'limitBreak' && b.activity === 'sofa');
+    });
+    if (partner && this.free(ch) && this.pingPongTables(ZoneLabel.LOUNGE).length > 0) {
+      tries.set('pingpong', () => {
+        const held = this.borrows.get(partner.id);
+        this.borrows.delete(partner.id);
+        if (this.startRally([ch.id, partner.id], rng, ZoneLabel.LOUNGE)) {
+          this.lastBreakActivity.set(ch.id, 'pingpong');
+          this.lastBreakActivity.set(partner.id, 'pingpong');
+          return true;
+        }
+        if (held) this.borrows.set(partner.id, held);
+        return false;
+      });
+    }
+
+    const available = new Set(tries.keys());
+    while (available.size > 0) {
+      const pick = pickBreakActivity(available, this.lastBreakActivity.get(ch.id), rng);
+      if (!pick) break;
+      if (tries.get(pick)?.()) return true;
+      available.delete(pick);
+    }
+    return false;
+  }
+
+  /** A seat someone holds (its desk, a destination, an NPC on the break) — not its own. */
+  private seatTaken(place: ZoneTarget, ch: Character): boolean {
+    return (this.host.seats.get(place.key)?.assigned ?? false) && ch.zoneTarget?.key !== place.key;
+  }
+
+  /** Where the break gathers: around the seats already taken on it (agents
+   *  on the sofas, the NPCs), else wherever this one is. */
+  private breakHub(ch: Character): { col: number; row: number } {
+    const at: Array<{ col: number; row: number }> = [];
+    for (const [id, b] of this.borrows) {
+      if (id !== ch.id && b.kind === 'limitBreak' && b.activity === 'sofa') at.push(b.target);
+    }
+    for (const t of this.guestSeats.values()) at.push(t);
+    if (at.length === 0) return { col: ch.tileCol, row: ch.tileRow };
+    return {
+      col: Math.round(at.reduce((n, p) => n + p.col, 0) / at.length),
+      row: Math.round(at.reduce((n, p) => n + p.row, 0) / at.length),
+    };
+  }
+
+  /** No seat left: a spot to stand with the group, facing it. */
+  private standNear(
+    ch: Character,
+    tiles: ReadonlyArray<{ col: number; row: number }>,
+    hub: { col: number; row: number },
+  ): ZoneTarget | null {
+    const spots = tiles
+      .filter(
+        (t) =>
+          Math.abs(t.col - hub.col) + Math.abs(t.row - hub.row) <= BREAK_STAND_RADIUS_TILES &&
+          (t.col !== hub.col || t.row !== hub.row) &&
+          isWalkable(t.col, t.row, this.host.tileMap, this.host.blockedTiles),
+      )
+      .map((t) => standSpot(ZoneLabel.LOUNGE, t.col, t.row, faceToward(t, hub, Direction.DOWN)));
+    return this.nearestPlace(ch, spots, new Set(), hub);
+  }
+
+  /** The break's pizza: one open box on a Lounge table with room, for as long as it lasts. */
+  private refreshBreakPizza(on: boolean): void {
+    this.breakPizzaDecor = [];
+    this.breakPizzaTables = [];
+    this.dirty = true;
+    if (!on) return;
+    const free = freeSurfaceTiles(this.decorInput(), [ZoneLabel.LOUNGE]);
+    const tables = this.items
+      .filter(
+        (i) => getCatalogEntry(i.type)?.isDesk && this.zoneAt(i.col, i.row) === ZoneLabel.LOUNGE,
+      )
+      .sort((a, b) => a.row - b.row || a.col - b.col);
+    for (const table of tables) {
+      const tile = free.find(
+        (t) =>
+          t.col >= table.col &&
+          t.col < table.col + table.w &&
+          t.row >= table.row &&
+          t.row < table.row + table.h,
+      );
+      if (!tile) continue;
+      this.breakPizzaTables = [table];
+      this.breakPizzaDecor = toPlaced([{ type: FUN_TYPE.PIZZA_BOX_OPEN, ...tile }]);
+      return;
+    }
+  }
+
+  /** Now and then someone settled on the break (or an NPC with it) says something. */
+  private updateBreakChat(members: readonly Character[], nowMs: number): void {
+    this.breakLines = this.breakLines.filter((l) => this.clock < l.until);
+    if (this.clock < this.breakChatAt) return;
+    const rng = this.host.zoneRandom;
+    this.breakChatAt =
+      this.clock + BREAK_CHAT_MIN_SEC + rng() * (BREAK_CHAT_MAX_SEC - BREAK_CHAT_MIN_SEC);
+    const speakers: BreakSpeaker[] = [];
+    for (const ch of members) {
+      const b = this.borrows.get(ch.id);
+      if (b?.kind === 'limitBreak' && b.activity !== 'shelves' && b.settledFor > 0) {
+        speakers.push(ch.id);
+      }
+    }
+    speakers.push(...(this.host.breakGuests?.() ?? []));
+    if (speakers.length < 2) return; // nobody to talk to
+    const options = speakers.filter(
+      (s) => s !== this.lastBreakSpeaker && !this.breakLines.some((l) => l.who === s),
+    );
+    if (options.length === 0) return;
+    const who = options[Math.floor(rng() * options.length) % options.length];
+    this.lastBreakSpeaker = who;
+    this.breakLines.push({
+      who,
+      text: breakLine(who, this.breakResetsAt(), nowMs, rng),
+      until: this.clock + BREAK_LINE_SEC,
+    });
   }
 
   // ════════════════════════════════════════════════════════════
@@ -1140,7 +1525,8 @@ export class FunDirector {
       n.age += dt;
     }
     while (this.notes.length > 0 && this.notes[0].age > RADIO_NOTE_LIFETIME_SEC) this.notes.shift();
-    if (!this.radioPlaying || radios.length === 0) return;
+    // On the break the radio is on for the eyes (the sound stays the viewer's toggle).
+    if ((!this.radioPlaying && !this.breakWasOn) || radios.length === 0) return;
     this.noteIn -= dt;
     if (this.noteIn > 0) return;
     this.noteIn = RADIO_NOTE_INTERVAL_SEC;

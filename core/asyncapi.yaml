@@ -851,10 +851,17 @@ components:
           type: boolean
         markdown:
           type: string
+          description: The overview -- what the dashboard shows first.
+        details:
+          type: string
+          description: The per-repo details (a section per repo, a bullet per piece of work).
         generatedAt:
           type: integer
         aiWritten:
           type: boolean
+        notionUrl:
+          type: string
+          description: The day's page in Notion, when the report was sent there.
         writing:
           type: boolean
           description: True while a report for this date is being written.

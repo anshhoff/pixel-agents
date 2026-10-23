@@ -19,10 +19,18 @@ import {
   buildReportData,
   buildReportPrompt,
   type ClaudeRun,
+  formatMinutes,
+  gatherWorkReport,
   ManagerReports,
   managerReportsEnabled,
-  templateReport,
+  repoFacts,
+  splitReport,
+  type TaskWithNotes,
+  templateDetails,
+  templateOverview,
+  withRepoFacts,
 } from '../src/tasks/managerReports.js';
+import type { PublishedReport } from '../src/tasks/notionConnector.js';
 import { TaskLedger } from '../src/tasks/taskLedger.js';
 import type { AgentState } from '../src/types.js';
 
@@ -39,9 +47,12 @@ const DAY = '2026-10-17';
 const at = (h: number, m = 0, d = 17) => new Date(2026, 9, d, h, m, 0).getTime();
 const PR_URL = 'https://github.com/acme/web/pull/42';
 const TOPIC = 'pixel-agents-Xy12_ab';
-const AI_MARKDOWN = '## Done today\n- Shipped the strip';
+const AI_OVERVIEW = 'Hi Ansh!\n\n## Overview\n- **hobbyfi-blog** — Shipped the strip';
+const AI_DETAILS =
+  '## hobbyfi-blog\n\n- **The strip** — Done · 42 min\n  - It now shows on the home page';
+const AI_MARKDOWN = `${AI_OVERVIEW}\n===DETAILS===\n${AI_DETAILS}`;
 
-function task(overrides: Partial<Task>): Task {
+function task(overrides: Partial<TaskWithNotes>): TaskWithNotes {
   return {
     id: overrides.title ?? 'id',
     title: 'Task',
@@ -105,50 +116,185 @@ describe('report data and prompt', () => {
     expect(JSON.stringify(data)).not.toMatch(/session-secret-uuid|startedAt|"id"/);
   });
 
-  it('asks for the six sections, addressed to Ansh, from the JSON alone', () => {
-    const data = buildReportData(DAY, SAMPLE);
+  it('asks for an overview and per-repo details, in plain English, from the JSON alone', async () => {
+    const data = await gatherWorkReport(DAY, SAMPLE, { projectsRoot: null, git: null });
     const prompt = buildReportPrompt(data);
-    for (const section of [
-      'Done today',
-      'Still open',
-      'Waiting on you',
-      'PRs shipped',
-      'Stuck or failing',
-      'One suggestion',
-    ]) {
+    for (const section of ['Overview', 'Waiting on you', 'PRs shipped', 'Tomorrow']) {
       expect(prompt).toContain(`## ${section}`);
     }
+    expect(prompt).toContain('===DETAILS===');
     expect(prompt).toContain('Ansh');
+    expect(prompt).toMatch(/plain, simple English/);
     expect(prompt).toMatch(/never invent/i);
     expect(prompt).toContain(JSON.stringify(data));
+    // No ids or sessions leave the machine.
+    expect(JSON.stringify(data)).not.toMatch(/session-secret-uuid|startedAt|"id"/);
   });
 
-  it('writes a deterministic template with the same sections from the same data', () => {
-    const data = buildReportData(DAY, SAMPLE);
-    const md = templateReport(data);
-    expect(templateReport(data)).toBe(md);
-    expect(md).toContain('Ansh');
-    const section = (name: string) => {
-      const from = md.indexOf(`## ${name}`);
-      expect(from).toBeGreaterThanOrEqual(0);
-      const next = md.indexOf('\n## ', from + 1);
-      return md.slice(from, next === -1 ? undefined : next);
+  it('splits the reply at the marker; no marker is all overview', () => {
+    expect(splitReport(AI_MARKDOWN)).toEqual({ overview: AI_OVERVIEW, details: AI_DETAILS });
+    expect(splitReport('  just a report \n')).toEqual({ overview: 'just a report' });
+  });
+
+  it('formats minutes', () => {
+    expect(formatMinutes(45)).toBe('45 min');
+    expect(formatMinutes(60)).toBe('1 h');
+    expect(formatMinutes(80)).toBe('1 h 20 min');
+  });
+
+  it('writes deterministic template parts from the same data', async () => {
+    const data = await gatherWorkReport(DAY, SAMPLE, { projectsRoot: null, git: null });
+    const overview = templateOverview(data);
+    expect(templateOverview(data)).toBe(overview);
+    expect(overview).toContain('Ansh');
+    expect(overview).toMatch(/## Overview\n+- \*\*hobbyfi-blog\*\*/);
+    expect(overview).toMatch(/## Waiting on you\n+- \*\*Pick a font\*\*/);
+    expect(overview).toContain(`[Add the strip](${PR_URL})`);
+    expect(overview).toMatch(/## Tomorrow\n+.*waiting on you/i);
+    const details = templateDetails(data);
+    expect(details).toContain('## hobbyfi-blog');
+    expect(details).toContain('- **Ship the strip** — Done · 42 min');
+    expect(details).toContain('- **Refactor auth** — In progress · 1 h 15 min');
+    // A remote session's title only names its machine: it is called a session there.
+    expect(details).toMatch(/## web\n\n- \*\*Session on Mac\*\*/);
+  });
+
+  it('says so when there is nothing', async () => {
+    const data = await gatherWorkReport(DAY, [], { projectsRoot: null, git: null });
+    expect(templateOverview(data)).toMatch(/## Overview\n+_Nothing ran/);
+    expect(templateOverview(data)).toMatch(/## PRs shipped\n+_No PRs/);
+    expect(templateDetails(data)).toMatch(/Nothing ran/);
+  });
+
+  it('keeps the totals the dashboard and MCP read', () => {
+    expect(buildReportData(DAY, SAMPLE).totals).toMatchObject({ done: 2, open: 1, waiting: 1 });
+  });
+});
+
+describe('withRepoFacts', () => {
+  it("adds each repo's facts under its section, and a section for a repo the details left out", async () => {
+    const data = await gatherWorkReport(DAY, SAMPLE, { projectsRoot: null, git: null });
+    const out = withRepoFacts('Intro\n\n## hobbyfi-blog\n\n- **The strip** — Done', data);
+    expect(out).toMatch(
+      /^Intro\n\n## hobbyfi-blog\n\n- \*\*The strip\*\* — Done\n- \*\*The numbers\*\* — /,
+    );
+    expect(out).toContain(`- **PRs**\n  - [Add the strip](${PR_URL})`);
+    expect(out).toMatch(
+      /## web\n\n- \*\*The numbers\*\* — 10 min · 1 session · on Mac · 0 commits/,
+    );
+  });
+});
+
+describe('gatherWorkReport', () => {
+  let root: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-projects-'));
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const record = (type: string, hour: number, content: unknown, extra = {}) =>
+    JSON.stringify({
+      type,
+      timestamp: new Date(at(hour)).toISOString(),
+      cwd: '/work/hobbyfi-blog',
+      message: { role: type, content },
+      ...extra,
+    });
+
+  it("reads a local task's asks, outcomes and plan from its transcript, within its time", async () => {
+    fs.mkdirSync(path.join(root, '-work-hobbyfi-blog'));
+    fs.writeFileSync(
+      path.join(root, '-work-hobbyfi-blog', 'sess-1.jsonl'),
+      [
+        record('user', 8, 'a prompt from before the task'),
+        record('user', 9, 'Add a newsletter strip to the home page', { gitBranch: 'feat/strip' }),
+        record('assistant', 9, [
+          { type: 'tool_use', name: 'TodoWrite', input: { todos: [{ content: 'Build strip' }] } },
+        ]),
+        record('assistant', 10, [{ type: 'text', text: 'The strip is live on the home page.' }]),
+        record('user', 10, [{ type: 'tool_result', content: 'ok' }]),
+        record('user', 10, '<command-name>/clear</command-name>'),
+        record('user', 11, 'sidechain', { isSidechain: true }),
+      ].join('\n'),
+    );
+    const gitCalls: string[][] = [];
+    const git = async (args: string[]) => {
+      gitCalls.push(args);
+      if (args[0] === 'rev-parse') return '/work/hobbyfi-blog\n';
+      if (args[0] === 'config') return 'ansh@example.com\n';
+      return [
+        '\x1eabc1234\trefs/heads/main\tAdd newsletter strip',
+        '',
+        '30\t2\tsrc/strip.ts',
+        '4\t0\tsrc/home.ts',
+        '\x1edef5678\trefs/heads/feat/strip\tFix strip spacing',
+        '',
+        '1\t1\tsrc/strip.ts',
+        '-\t-\tlogo.png',
+        '',
+      ].join('\n');
     };
-    expect(section('Done today')).toContain('Ship the strip');
-    expect(section('Done today')).toContain('💻 Mac · web');
-    expect(section('Done today')).not.toContain('Refactor auth');
-    expect(section('Still open')).toContain('Refactor auth');
-    expect(section('Waiting on you')).toContain('Pick a font');
-    expect(section('PRs shipped')).toContain(`[Add the strip](${PR_URL})`);
-    // An hour and more of work with nothing shipped looks stuck.
-    expect(section('Stuck or failing')).toContain('Refactor auth');
-    expect(section('One suggestion')).toMatch(/waiting on you/i);
+    const tasks: TaskWithNotes[] = [
+      task({
+        title: 'Newsletter strip',
+        sessionId: 'sess-1',
+        startedAt: at(9),
+        activeMs: 30 * MIN,
+      }),
+    ];
+    const data = await gatherWorkReport(DAY, tasks, { projectsRoot: root, git, now: () => at(20) });
+    const [repo] = data.repos;
+    expect(repo.repo).toBe('hobbyfi-blog');
+    expect(repo.commits).toEqual(['Add newsletter strip', 'Fix strip spacing']);
+    expect(repo.git).toEqual({
+      branches: [
+        { name: 'main', commits: [{ hash: 'abc1234', subject: 'Add newsletter strip' }] },
+        { name: 'feat/strip', commits: [{ hash: 'def5678', subject: 'Fix strip spacing' }] },
+      ],
+      files: 3,
+      insertions: 35,
+      deletions: 3,
+    });
+    expect(repo.tasks[0].branch).toBe('feat/strip');
+    // The facts block lists every commit by branch; the report run never sees it.
+    const facts = repoFacts(repo).join('\n');
+    expect(facts).toContain(
+      '- **The numbers** — 30 min · 1 session · on this PC · 2 commits · +35 / −3 lines in 3 files',
+    );
+    expect(facts).toContain('- **Worked on** — `feat/strip`');
+    expect(facts).toContain('  - `main` — 1 commit\n    - `abc1234` Add newsletter strip');
+    expect(buildReportPrompt(data)).not.toContain('abc1234');
+    expect(repo.tasks[0]).toMatchObject({
+      asked: ['Add a newsletter strip to the home page'],
+      outcomes: ['The strip is live on the home page.'],
+      plan: ['Build strip'],
+    });
+    expect(gitCalls.find((a) => a[0] === 'log')).toContain('--author=ansh@example.com');
   });
 
-  it('says so when a section is empty', () => {
-    const md = templateReport(buildReportData(DAY, []));
-    expect(md).toMatch(/## Done today\n+_Nothing/);
-    expect(md).toMatch(/## PRs shipped\n+_No PRs/);
+  it("uses a remote task's live notes, and folds sessions with nothing recorded", async () => {
+    const tasks: TaskWithNotes[] = [
+      task({
+        title: '💻 Mac · native-re',
+        repo: 'native-re',
+        machine: 'Mac',
+        activeMs: 90 * MIN,
+        notes: {
+          asks: [],
+          outcomes: ['Decoded the save format'],
+          todos: [],
+          commits: ['Add decoder'],
+        },
+      }),
+      task({ title: '💻 Mac · native-re', repo: 'native-re', machine: 'Mac' }),
+    ];
+    const data = await gatherWorkReport(DAY, tasks, { projectsRoot: root, git: null });
+    expect(data.repos).toHaveLength(1);
+    expect(data.repos[0]).toMatchObject({ machines: ['Mac'], minutesActive: 90, briefSessions: 1 });
+    expect(data.repos[0].tasks[0]).toMatchObject({
+      outcomes: ['Decoded the save format'],
+      commits: ['Add decoder'],
+    });
   });
 });
 
@@ -175,6 +321,8 @@ describe('ManagerReports', () => {
   let sent: Array<{ url: string; body: string; headers: Record<string, string> }>;
   let messages: Array<Record<string, unknown>>;
   let env: NodeJS.ProcessEnv;
+  let published: PublishedReport[];
+  let publishUrl: string | undefined;
 
   const reportFile = (date = DAY) => path.join(dataDir, REPORTS_DIR_NAME, `${date}.json`);
   const readReport = (date = DAY) => JSON.parse(fs.readFileSync(reportFile(date), 'utf-8'));
@@ -189,6 +337,14 @@ describe('ManagerReports', () => {
       runClaude: (run) => {
         runs.push(run);
         return runner(run);
+      },
+      projectsRoot: null,
+      git: null,
+      publisher: {
+        publish: async (report) => {
+          published.push(report);
+          return publishUrl;
+        },
       },
     });
   }
@@ -247,6 +403,8 @@ describe('ManagerReports', () => {
     messages = [];
     store.on('broadcast', (m) => messages.push(m));
     env = {};
+    published = [];
+    publishUrl = undefined;
     reports = newReports();
   });
 
@@ -280,10 +438,17 @@ describe('ManagerReports', () => {
       expect(run.cwd).toBe(path.join(dataDir, MANAGER_DIR_NAME));
       expect(fs.statSync(run.cwd).isDirectory()).toBe(true);
       expect(run.timeout).toBe(MANAGER_CLAUDE_TIMEOUT_MS);
-      expect(MANAGER_CLAUDE_TIMEOUT_MS).toBe(120_000);
+      expect(MANAGER_CLAUDE_TIMEOUT_MS).toBe(300_000);
       expect(run.maxBuffer).toBe(MANAGER_CLAUDE_MAX_BUFFER);
       expect(MANAGER_CLAUDE_MAX_BUFFER).toBe(1024 * 1024);
-      expect(run.input).toBe(buildReportPrompt(buildReportData(DAY, ledger.tasksFor(DAY))));
+      expect(run.input).toBe(
+        buildReportPrompt(
+          await gatherWorkReport(DAY, ledger.tasksWithNotesFor(DAY), {
+            projectsRoot: null,
+            git: null,
+          }),
+        ),
+      );
       expect(run.input).toContain('Refactor auth');
     });
 
@@ -291,9 +456,13 @@ describe('ManagerReports', () => {
       seedDay();
       clock = at(15, 30);
       await reports.writeNow();
+      const details = readReport().details as string;
+      expect(details.startsWith(AI_DETAILS)).toBe(true);
+      expect(details).toContain('- **The numbers** — 0 min · 4 sessions · on this PC · 0 commits');
       expect(readReport()).toEqual({
         date: DAY,
-        markdown: AI_MARKDOWN,
+        markdown: AI_OVERVIEW,
+        details,
         generatedAt: at(15, 30),
         aiWritten: true,
       });
@@ -302,10 +471,35 @@ describe('ManagerReports', () => {
         type: 'report',
         date: DAY,
         exists: true,
-        markdown: AI_MARKDOWN,
+        markdown: AI_OVERVIEW,
+        details,
         generatedAt: at(15, 30),
         aiWritten: true,
       });
+    });
+
+    it('sends the report to the publisher and keeps the page link', async () => {
+      seedDay();
+      publishUrl = 'https://www.notion.so/Day-abc';
+      await reports.writeNow();
+      expect(published).toHaveLength(1);
+      expect(published[0]).toMatchObject({
+        date: DAY,
+        title: 'Saturday, 17 October 2026',
+        details: readReport().details,
+      });
+      expect(published[0].details).toContain(AI_DETAILS);
+      expect(published[0].repos).toEqual(['hobbyfi-blog']);
+      expect(readReport().notionUrl).toBe(publishUrl);
+      expect(reports.reportMessage(DAY)).toMatchObject({ notionUrl: publishUrl });
+      expect(messages.filter((m) => m.type === 'reportReady')).toHaveLength(2);
+    });
+
+    it('keeps the AI overview and writes template details when the marker is missing', async () => {
+      runner = async () => 'Just an overview';
+      await reports.writeNow();
+      expect(readReport()).toMatchObject({ markdown: 'Just an overview', aiWritten: true });
+      expect(readReport().details).toMatch(/Nothing ran/);
     });
 
     it('uses claude.exe on Windows, and PIXEL_AGENTS_CLAUDE_BIN over either', async () => {
@@ -328,8 +522,15 @@ describe('ManagerReports', () => {
         throw new Error('spawn claude ENOENT');
       };
       await reports.writeNow();
-      const data = buildReportData(DAY, ledger.tasksFor(DAY));
-      expect(readReport()).toMatchObject({ markdown: templateReport(data), aiWritten: false });
+      const data = await gatherWorkReport(DAY, ledger.tasksWithNotesFor(DAY), {
+        projectsRoot: null,
+        git: null,
+      });
+      expect(readReport()).toMatchObject({
+        markdown: templateOverview(data),
+        details: withRepoFacts(templateDetails(data), data),
+        aiWritten: false,
+      });
       expect(messages).toContainEqual({ type: 'reportReady', date: DAY });
       expect(logged).toHaveBeenCalled();
     });
@@ -339,7 +540,7 @@ describe('ManagerReports', () => {
       runner = async () => '   \n';
       await reports.writeNow();
       expect(readReport()).toMatchObject({ aiWritten: false });
-      expect(readReport().markdown).toContain('## Done today');
+      expect(readReport().markdown).toContain('## Overview');
     });
 
     it('answers requestReport with writing:true while it runs, one run at a time', async () => {

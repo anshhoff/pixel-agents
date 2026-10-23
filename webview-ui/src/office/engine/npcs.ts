@@ -72,6 +72,16 @@ export interface AnshErrandHooks {
 /** One frame of an NPC's walk, with its own seat counted walkable. */
 type WalkStep = 'walking' | 'arrived' | 'unreachable';
 
+/**
+ * Sitting with the limit break (fun/limitBreak.ts): walking over, there, or
+ * walking back; `home` when there was no way over (it stays at its desk until
+ * the break ends). Outranks the Manager's visit and Ansh's errands.
+ */
+interface Hangout {
+  phase: 'going' | 'there' | 'home' | 'returning';
+  target: ZoneTarget;
+}
+
 const seatTarget = (seat: Seat): ZoneTarget => ({
   zone: null,
   key: seat.uid,
@@ -122,6 +132,7 @@ export class OfficeNpcs {
   private readonly anshHome: ZoneTarget | null;
   private visit: { phase: VisitPhase; timer: number } | null = null;
   private errand: AnshErrand | null = null;
+  private readonly hangouts = new Map<NpcKind, Hangout>();
 
   constructor(places: NpcPlaces = NO_NPC_PLACES) {
     this.places = places;
@@ -171,7 +182,7 @@ export class OfficeNpcs {
   startManagerVisit(): boolean {
     const ch = this.manager;
     const spot = this.places.visitSpot;
-    if (!ch || !spot) return false;
+    if (!ch || !spot || this.hangouts.has('manager')) return false;
     if (this.visit) return true;
     this.visit = { phase: 'going', timer: 0 };
     this.walkTo(ch, standTarget('npc:manager-visit', spot));
@@ -186,7 +197,8 @@ export class OfficeNpcs {
   /**
    * A thought's move: Ansh walks to `spot`, stays `staySec` facing what
    * `lookAt` returns, then walks back to his desk. A new errand replaces one
-   * under way (he sets off from wherever he is). False without an Ansh.
+   * under way (he sets off from wherever he is). False without an Ansh, or
+   * while he is with the limit break.
    */
   startAnshErrand(
     spot: { col: number; row: number },
@@ -195,7 +207,7 @@ export class OfficeNpcs {
     hooks: AnshErrandHooks = {},
   ): boolean {
     const ch = this.ansh;
-    if (!ch || !this.anshHome) return false;
+    if (!ch || !this.anshHome || this.hangouts.has('ansh')) return false;
     if (this.errand) leaveErrand(this.errand, false);
     this.errand = { phase: 'going', timer: 0, staySec, lookAt, hooks, left: false };
     const facing = faceToward(spot, lookAt() ?? spot, ch.dir);
@@ -203,8 +215,57 @@ export class OfficeNpcs {
     return true;
   }
 
+  /**
+   * Join the limit break: walk to `target` (a Lounge seat) and stay there
+   * until leaveHangout. A visit or errand under way is dropped (an errand as
+   * cut short). False without that NPC, or while it is still with — or on its
+   * way back from — a break.
+   */
+  joinHangout(kind: NpcKind, target: ZoneTarget): boolean {
+    const ch = this.characterOf(kind);
+    if (!ch || this.hangouts.has(kind)) return false;
+    if (kind === 'ansh' && this.errand) {
+      leaveErrand(this.errand, false);
+      this.errand = null;
+    }
+    if (kind === 'manager') this.visit = null;
+    this.hangouts.set(kind, { phase: 'going', target });
+    this.walkTo(ch, target);
+    return true;
+  }
+
+  /** The break is over: walk back to its desk (it is free again once there). */
+  leaveHangout(kind: NpcKind): void {
+    const h = this.hangouts.get(kind);
+    const ch = this.characterOf(kind);
+    const home = kind === 'ansh' ? this.anshHome : this.managerHome;
+    if (!h || h.phase === 'returning') return;
+    if (!ch || !home || h.phase === 'home') {
+      this.hangouts.delete(kind);
+      return;
+    }
+    h.phase = 'returning';
+    this.walkTo(ch, home);
+  }
+
+  /** With a break: going, there, at its desk for want of a way over, or walking back. */
+  inHangout(kind: NpcKind): boolean {
+    return this.hangouts.has(kind);
+  }
+
+  /** On its way back from a break (free once it sits down). */
+  leavingHangout(kind: NpcKind): boolean {
+    return this.hangouts.get(kind)?.phase === 'returning';
+  }
+
+  /** Sitting with the break right now. */
+  atHangout(kind: NpcKind): boolean {
+    return this.hangouts.get(kind)?.phase === 'there';
+  }
+
   update(dt: number, world: NpcWorld): void {
-    this.updateAnsh(dt, world);
+    if (!this.updateHangout('ansh', dt, world)) this.updateAnsh(dt, world);
+    if (this.updateHangout('manager', dt, world)) return;
     const ch = this.manager;
     const home = this.managerHome;
     if (!ch || !home) return;
@@ -239,6 +300,43 @@ export class OfficeNpcs {
     this.visit = null;
     ch.zoneTarget = null;
     placeAt(ch, home);
+  }
+
+  /** One frame of a hangout; false when the NPC isn't on one. */
+  private updateHangout(kind: NpcKind, dt: number, world: NpcWorld): boolean {
+    const h = this.hangouts.get(kind);
+    const ch = this.characterOf(kind);
+    if (!h || !ch) return false;
+    const home = kind === 'ansh' ? this.anshHome : this.managerHome;
+    const ownSeat = kind === 'ansh' ? this.places.anshSeat : this.places.managerSeat;
+    switch (h.phase) {
+      case 'there':
+        return true; // sat still with the others
+      case 'home':
+        idleAnimate(ch, dt);
+        return true;
+      case 'going': {
+        const step = stepWalk(ch, ownSeat, dt, world, h.target);
+        if (step === 'walking') return true;
+        if (step === 'arrived') {
+          h.phase = 'there';
+          return true;
+        }
+        // No way over: back in its chair until the break ends.
+        h.phase = 'home';
+        ch.zoneTarget = null;
+        if (home) placeAt(ch, home);
+        return true;
+      }
+      case 'returning': {
+        const step = home ? stepWalk(ch, ownSeat, dt, world) : 'unreachable';
+        if (step === 'walking') return true;
+        this.hangouts.delete(kind);
+        ch.zoneTarget = null;
+        if (home) placeAt(ch, home);
+        return true;
+      }
+    }
   }
 
   private updateAnsh(dt: number, world: NpcWorld): void {
@@ -332,15 +430,25 @@ function leaveErrand(errand: AnshErrand, stayed: boolean): void {
 
 /**
  * One frame of an NPC's walk under the FSM's zone branch, with its own seat
- * counted walkable (chairs are blocked to everyone else).
+ * counted walkable (chairs are blocked to everyone else) — and the seat it is
+ * headed for, when that is one (a Lounge seat on the limit break).
  */
-function stepWalk(ch: Character, ownSeat: Seat | null, dt: number, world: NpcWorld): WalkStep {
-  const ownKey = ownSeat ? `${ownSeat.seatCol},${ownSeat.seatRow}` : null;
-  const removed = ownKey !== null && world.blockedTiles.delete(ownKey);
+function stepWalk(
+  ch: Character,
+  ownSeat: Seat | null,
+  dt: number,
+  world: NpcWorld,
+  toSeat?: ZoneTarget,
+): WalkStep {
+  const keys = [
+    ownSeat ? `${ownSeat.seatCol},${ownSeat.seatRow}` : null,
+    toSeat?.sit ? `${toSeat.col},${toSeat.row}` : null,
+  ];
+  const removed = keys.filter((k): k is string => k !== null && world.blockedTiles.delete(k));
   try {
     updateCharacter(ch, dt, world.walkableTiles, world.seats, world.tileMap, world.blockedTiles);
   } finally {
-    if (removed && ownKey) world.blockedTiles.add(ownKey);
+    for (const k of removed) world.blockedTiles.add(k);
   }
   if (ch.zoneTarget?.unreachable) return 'unreachable';
   return isSettledAtZoneTarget(ch) ? 'arrived' : 'walking';

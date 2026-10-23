@@ -75,6 +75,7 @@ import {
   type ProgressTracker,
 } from '../progress/progressTracker.js';
 import type { AgentState } from '../types.js';
+import { addNote, parseNotes, type WorkNotes } from './workNotes.js';
 
 export interface TaskLedgerOptions {
   /** Root of the Manager's files (~/.pixel-agents by default): days live in
@@ -90,6 +91,8 @@ interface LedgerTask extends Task {
   fileKeys: Set<string>;
   /** Titled `Untitled · <repo>`: the first real title renames it rather than splitting. */
   placeholder?: true;
+  /** What the work was, in words (workNotes.ts). Kept in the day file, never on the wire. */
+  notes?: WorkNotes;
 }
 
 interface Day {
@@ -101,7 +104,7 @@ interface Day {
 interface DayFile {
   version: 1;
   date: string;
-  tasks: Array<Task & { fileKeys: string[]; placeholder?: true }>;
+  tasks: Array<Task & { fileKeys: string[]; placeholder?: true; notes?: WorkNotes }>;
 }
 
 /** What the ledger knows about one agent that can own tasks. */
@@ -202,6 +205,22 @@ export class TaskLedger {
     if (date === day.date) return day.tasks.map(wireTask);
     if (this.tasksDir === null) return [];
     return readDay(this.tasksDir, date).tasks.map(wireTask);
+  }
+
+  /** A day's tasks with their work notes, for the Manager's report. */
+  tasksWithNotesFor(date: string): Array<Task & { notes?: WorkNotes }> {
+    if (!isDateKey(date)) return [];
+    const day = this.today(this.now());
+    const tasks =
+      date === day.date
+        ? day.tasks
+        : this.tasksDir === null
+          ? []
+          : readDay(this.tasksDir, date).tasks;
+    return tasks.map((task) => ({
+      ...wireTask(task),
+      ...(task.notes ? { notes: structuredClone(task.notes) } : {}),
+    }));
   }
 
   /** Close every open task no live agent has picked up (after a restart). */
@@ -340,6 +359,13 @@ export class TaskLedger {
       case 'activeTime':
         task.activeMs += event.ms;
         break;
+      case 'note': {
+        task.notes ??= { asks: [], outcomes: [], todos: [], commits: [] };
+        const field =
+          event.note === 'outcome' ? 'outcomes' : event.note === 'todo' ? 'todos' : 'commits';
+        if (!addNote(task.notes, field, event.text)) return;
+        break;
+      }
     }
     this.changed(task);
   };
@@ -639,6 +665,7 @@ function carryOver(task: LedgerTask): LedgerTask {
     commands: 0,
     activeMs: 0,
     fileKeys: new Set(),
+    notes: undefined,
   };
 }
 
@@ -679,6 +706,7 @@ function parseTask(entry: unknown): LedgerTask | undefined {
   const prs = (Array.isArray(raw.prs) ? raw.prs : [])
     .map(parsePr)
     .filter((p): p is DailyPr => p !== undefined);
+  const notes = parseNotes(raw.notes);
   const fileKeys = new Set(
     (Array.isArray(raw.fileKeys) ? raw.fileKeys : []).filter(
       (k): k is string => typeof k === 'string',
@@ -701,6 +729,7 @@ function parseTask(entry: unknown): LedgerTask | undefined {
     activeMs: countOf(raw.activeMs),
     fileKeys,
     ...(raw.placeholder === true ? { placeholder: true as const } : {}),
+    ...(notes ? { notes } : {}),
   };
 }
 
@@ -737,6 +766,7 @@ function writeDay(dir: string, day: Day): boolean {
       ...wireTask(task),
       fileKeys: [...task.fileKeys],
       ...(task.placeholder ? { placeholder: true as const } : {}),
+      ...(task.notes ? { notes: task.notes } : {}),
     })),
   };
   const tmp = `${file}.${process.pid}.tmp`;

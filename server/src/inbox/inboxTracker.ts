@@ -26,7 +26,7 @@ import type { AgentState } from '../types.js';
 import type { TranscriptSeed } from './agentLinks.js';
 import { agentLinkMessage, bridgeSessionIdOf, readTranscriptSeed } from './agentLinks.js';
 import { USAGE_LIMIT_FALLBACK_PAUSE_MS } from './constants.js';
-import type { UsageLimitInfo } from './usageLimit.js';
+import type { LimitReason, UsageLimitInfo } from './usageLimit.js';
 import { isModelResponse, usageLimitFromRecord } from './usageLimit.js';
 
 export interface InboxTrackerOptions {
@@ -141,6 +141,11 @@ export class InboxTracker {
   /** Is the agent paused right now (tests, diagnostics)? */
   isPaused(agentId: number): boolean {
     return this.limits.has(agentId);
+  }
+
+  /** Which limit pauses the agent right now, if one does. */
+  limitReasonOf(agentId: number): LimitReason | undefined {
+    return this.limits.get(agentId)?.info.reason;
   }
 
   dispose(): void {

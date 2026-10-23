@@ -16,10 +16,42 @@ export type Inline =
   | { type: 'code'; text: string }
   | { type: 'link'; href: string; children: Inline[] };
 
+export interface ListBlock {
+  type: 'list';
+  ordered: boolean;
+  items: Inline[][];
+  /** Nested lists, by item index (null: that item has none). Absent when no item has one. */
+  sublists?: Array<ListBlock | null>;
+}
+
 export type Block =
   | { type: 'heading'; level: number; children: Inline[] }
   | { type: 'paragraph'; children: Inline[] }
-  | { type: 'list'; ordered: boolean; items: Inline[][] };
+  | ListBlock;
+
+/** A list line as read: its indentation decides what it nests under. */
+interface ListLine {
+  indent: number;
+  ordered: boolean;
+  text: string;
+}
+
+/** A run of list lines as a list, items indented past the first nesting under the item above. */
+function buildList(lines: readonly ListLine[]): ListBlock {
+  const base = lines[0].indent;
+  const list: ListBlock = { type: 'list', ordered: lines[0].ordered, items: [] };
+  const sublists: Array<ListBlock | null> = [];
+  let i = 0;
+  while (i < lines.length) {
+    list.items.push(parseInline(lines[i].text));
+    let j = i + 1;
+    while (j < lines.length && lines[j].indent > base) j++;
+    sublists.push(j > i + 1 ? buildList(lines.slice(i + 1, j)) : null);
+    i = j;
+  }
+  if (sublists.some((s) => s !== null)) list.sublists = sublists;
+  return list;
+}
 
 /** The URL itself when it is absolute http(s), else null. */
 export function safeLinkHref(url: string): string | null {
@@ -41,7 +73,7 @@ const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
 export function parseMarkdown(markdown: string): Block[] {
   const blocks: Block[] = [];
   let paragraph: string[] = [];
-  let list: { ordered: boolean; items: string[] } | null = null;
+  let list: ListLine[] | null = null;
 
   const flushParagraph = () => {
     if (paragraph.length > 0) {
@@ -51,7 +83,7 @@ export function parseMarkdown(markdown: string): Block[] {
   };
   const flushList = () => {
     if (list) {
-      blocks.push({ type: 'list', ordered: list.ordered, items: list.items.map(parseInline) });
+      blocks.push(buildList(list));
       list = null;
     }
   };
@@ -86,15 +118,17 @@ export function parseMarkdown(markdown: string): Block[] {
     if (item) {
       flushParagraph();
       const ordered = numbered !== null;
-      if (list && list.ordered !== ordered) flushList();
-      if (!list) list = { ordered, items: [] };
-      list.items.push(item[1]);
+      const indent = (raw.match(/^\s*/)?.[0] ?? '').replace(/\t/g, '  ').length;
+      // A top-level item of the other kind starts a new list.
+      if (list && indent <= list[0].indent && list[0].ordered !== ordered) flushList();
+      if (!list) list = [];
+      list.push({ indent, ordered, text: item[1] });
       continue;
     }
     if (list) {
       // An indented line under an item continues it; anything else ends the list.
       if (/^\s+/.test(raw)) {
-        list.items[list.items.length - 1] += ` ${line.trim()}`;
+        list[list.length - 1].text += ` ${line.trim()}`;
         continue;
       }
       flushList();

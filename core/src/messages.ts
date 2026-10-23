@@ -335,8 +335,10 @@ export interface Report {
   date: string;
   exists: boolean;
   markdown?: string;
+  details?: string;
   generatedAt?: number;
   aiWritten?: boolean;
+  notionUrl?: string;
   writing?: boolean;
 }
 

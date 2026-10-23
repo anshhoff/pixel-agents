@@ -280,8 +280,9 @@ export const REPORT_SCHEDULE_FILE_NAME = 'scheduled.json';
 export const MANAGER_REPORT_HOUR = 19;
 /** How often the clock is checked against MANAGER_REPORT_HOUR. */
 export const MANAGER_REPORT_CHECK_INTERVAL_MS = 60_000;
-/** Kill a `claude -p` report run after this long (the template is written instead). */
-export const MANAGER_CLAUDE_TIMEOUT_MS = 120_000;
+/** Kill a `claude -p` report run after this long (the template is written
+ *  instead). The work notes make it a long read and a long write. */
+export const MANAGER_CLAUDE_TIMEOUT_MS = 300_000;
 /** Cap on the report run's stdout; past it the run fails rather than grows. */
 export const MANAGER_CLAUDE_MAX_BUFFER = 1024 * 1024;
 /** `claude -p` with no tools and nothing saved: the task log arrives on stdin.
@@ -303,8 +304,36 @@ export const MANAGER_ENABLED_ENV = 'PIXEL_AGENTS_MANAGER';
 export const MANAGER_STUCK_ACTIVE_MINUTES = 60;
 /** Who the daily report is written to. */
 export const MANAGER_REPORT_ADDRESSEE = 'Ansh';
-/** The report run is asked to stay under this many words. */
+/** The report's overview (the part the dashboard shows first) stays under this many words. */
 export const MANAGER_REPORT_MAX_WORDS = 250;
+/** Line the report run puts between the overview and the per-repo details. */
+export const MANAGER_REPORT_DETAILS_MARKER = '===DETAILS===';
+/** Cap on the task log JSON handed to the report run; past it the oldest notes go first. */
+export const MANAGER_REPORT_MAX_INPUT_CHARS = 120_000;
+
+// ── Work notes (tasks/workNotes.ts): what a task actually did ─
+export const WORK_NOTE_MAX_ASKS = 15;
+export const WORK_NOTE_ASK_CHARS = 400;
+export const WORK_NOTE_MAX_OUTCOMES = 12;
+export const WORK_NOTE_OUTCOME_CHARS = 1200;
+export const WORK_NOTE_MAX_TODOS = 30;
+export const WORK_NOTE_TODO_CHARS = 160;
+export const WORK_NOTE_MAX_COMMITS = 150;
+export const WORK_NOTE_COMMIT_CHARS = 160;
+/** Most of a transcript kept for one task's time window (the rest of the window is left out). */
+export const WORK_NOTES_TRANSCRIPT_MAX_BYTES = 16 * 1024 * 1024;
+export const WORK_NOTES_GIT_TIMEOUT_MS = 10_000;
+
+// ── Notion (tasks/notionConnector.ts): a page per repo, newest day first ─
+/** In ~/.pixel-agents: { pageUrl, repos } -- where the report goes in Notion.
+ *  Absent: it is never sent there. */
+export const NOTION_CONFIG_FILE_NAME = 'notion.json';
+/** Set to one of LOCAL_SESSIONS_OFF_VALUES to never publish, whatever the file says. */
+export const NOTION_ENABLED_ENV = 'PIXEL_AGENTS_NOTION';
+/** The only tools the courier run may use (the claude.ai Notion connector's). */
+export const NOTION_CONNECTOR_TOOLS = ['create-pages', 'update-page', 'fetch'] as const;
+/** Kill one repo's courier run after this long. */
+export const NOTION_CONNECTOR_TIMEOUT_MS = 300_000;
 
 // ── Ansh's brain (ansh/anshBrain.ts) ─────────────────────────
 /** Subdirectory of ~/.pixel-agents holding the brain's state.json (on/off,

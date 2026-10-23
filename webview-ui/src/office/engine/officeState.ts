@@ -31,6 +31,7 @@ import {
   WAITING_BUBBLE_DURATION_SEC,
   ZONE_RETRY_INTERVAL_SEC,
 } from '../../constants.js';
+import type { BreakGuest } from '../../fun/funDirector.js';
 import { FunDirector } from '../../fun/funDirector.js';
 import { metricsOf } from '../agentLook.js';
 import { findNpcPlaces } from '../anshOffice.js';
@@ -221,6 +222,8 @@ export class OfficeState {
   /** Seconds Ansh has sat at his desk, and how long he sits before wandering. */
   private anshDeskSec = 0;
   private anshWanderAfterSec: number | null = null;
+  /** The limit break: an NPC that found no seat to join it tries again from then (office clock). */
+  private readonly breakGuestRetryAt = new Map<BreakGuest, number>();
   /** The errand he did last (the next one is something else), and a count
    *  that tells one errand's lines from the next. */
   private anshLastErrand: AnshErrand | null = null;
@@ -322,6 +325,7 @@ export class OfficeState {
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
     this.zones = this.buildZones();
+    this.fun.forgetGuestSeats(); // the seats and the NPCs are new
     this.npcs = this.buildNpcs();
     this.resetAnshErrands();
     this.coffeeCounter = coffeeZones(this);
@@ -2160,7 +2164,9 @@ export class OfficeState {
     // Living office: smokers in company face each other, not the ashtray.
     if (this.zones.zones.has(ZoneLabel.SMOKE)) this.faceFellowSmokers();
 
-    // Phase M: Ansh at the desk, the Manager (and its report-time visit).
+    // Phase M: Ansh at the desk, the Manager (and its report-time visit) —
+    // or, while the session limit has agents on a break, both in the Lounge.
+    this.syncBreakGuests();
     this.npcs.update(dt, this);
     this.tickAnshWander(dt);
     this.tickAnshErrand();
@@ -2287,6 +2293,50 @@ export class OfficeState {
     if (!pick || !this.startAnshErrandFor(pick.kind, pick.target, random)) return false;
     this.anshLastErrand = pick.kind;
     return true;
+  }
+
+  /** The limit break: the Manager and Ansh walk over to sit with it while it
+   *  is on, and back to their desks once it is over. */
+  private syncBreakGuests(): void {
+    const on = this.fun.breakOn;
+    for (const kind of ['manager', 'ansh'] as const) {
+      const ch = this.npcs.characterOf(kind);
+      if (!ch) continue;
+      if (!on) {
+        if (this.npcs.inHangout(kind) && !this.npcs.leavingHangout(kind)) {
+          this.npcs.leaveHangout(kind);
+          this.fun.releaseGuestSeat(kind);
+        }
+        continue;
+      }
+      if (this.npcs.inHangout(kind)) continue;
+      if (this.officeClock < (this.breakGuestRetryAt.get(kind) ?? -Infinity)) continue;
+      const seat = this.fun.claimGuestSeat(kind, ch);
+      if (seat && this.npcs.joinHangout(kind, seat)) continue;
+      if (seat) this.fun.releaseGuestSeat(kind);
+      this.breakGuestRetryAt.set(kind, this.officeClock + 2);
+    }
+  }
+
+  /** The NPCs sitting with the limit break right now (FunHost: they chat too). */
+  breakGuests(): BreakGuest[] {
+    return (['manager', 'ansh'] as const).filter((kind) => this.npcs.atHangout(kind));
+  }
+
+  /** What is said on the limit break right now, with who says it, for the speech overlay. */
+  breakSpeechShowing(): Array<{
+    key: string;
+    ch: Character;
+    text: string;
+    npc: BreakGuest | null;
+  }> {
+    const out: Array<{ key: string; ch: Character; text: string; npc: BreakGuest | null }> = [];
+    for (const line of this.fun.breakLinesShowing()) {
+      const npc = typeof line.who === 'number' ? null : line.who;
+      const ch = npc ? this.npcs.characterOf(npc) : this.characters.get(line.who as number);
+      if (ch) out.push({ key: String(line.who), ch, text: line.text, npc });
+    }
+    return out;
   }
 
   /** The lines being said on Ansh's errands right now (one per speaker), for
@@ -2466,7 +2516,7 @@ export class OfficeState {
    *  errand (a thought's included) resets the count, and he stays put while
    *  the Manager is on its way to his desk. */
   private tickAnshWander(dt: number): void {
-    if (!this.npcs.ansh || this.npcs.anshOut || this.npcs.visiting) {
+    if (!this.npcs.ansh || this.npcs.anshOut || this.npcs.visiting || this.npcs.inHangout('ansh')) {
       this.anshDeskSec = 0;
       return;
     }

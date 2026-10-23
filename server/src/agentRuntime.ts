@@ -12,6 +12,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { LIMIT_BREAK_REASONS } from '../../core/src/constants.js';
 import type { HookProvider } from '../../core/src/provider.js';
 import { createAgentState } from './agentState.js';
 import type { AgentStateStore } from './agentStateStore.js';
@@ -235,6 +236,7 @@ export class AgentRuntime {
         return 0;
       },
       isSleeping: (id) => this.localSessions.isSleeping(id),
+      onLimitBreak: (id) => LIMIT_BREAK_REASONS.includes(this.inbox.limitReasonOf(id) ?? ''),
       todayTasks: () => {
         const date = localDateKey((manager?.now ?? Date.now)());
         const { done, open, waiting } = buildReportData(date, this.tasks.tasksFor(date)).totals;

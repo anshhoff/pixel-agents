@@ -200,6 +200,25 @@ describe('the built-in thought', () => {
     );
     expect(snap([[1, agent(1)]], [], {})).toEqual({ action: 'stay', say: 'Quiet office.' });
   });
+
+  it('agents the session limit cut off are on a break: nobody to visit, a line about the reset', () => {
+    const agents: Array<[number, AgentState]> = [
+      [1, agent(1, { title: 'Fix login', isWaiting: true })],
+      [2, agent(2)],
+    ];
+    const sources: AnshSources = {
+      onLimitBreak: (id) => id === 1,
+      waitingSinceOf: (id) => (id === 1 ? T0 - 30 * MIN : undefined),
+    };
+    const { situation } = buildSituation(agents, [], sources, T0);
+    expect(situation.agents.map((a) => a.status)).toEqual(['on a break (limit)', 'idle']);
+    expect(snap(agents, [], sources)).toEqual({
+      action: 'stay',
+      say: '1 agent is on a break until the limit resets.',
+    });
+    // An approval still comes first.
+    expect(snap(agents, [pending(2, T0 - MIN)], sources).action).toBe('visit');
+  });
 });
 
 describe('the brain', () => {
@@ -227,20 +246,16 @@ describe('the brain', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  function makeBrain(env: NodeJS.ProcessEnv = {}): AnshBrain {
-    brain = new AnshBrain(
-      store,
-      {},
-      {
-        dataDir: dir,
-        now: () => now,
-        env,
-        runClaude: async (run) => {
-          runs.push(run);
-          return reply();
-        },
+  function makeBrain(env: NodeJS.ProcessEnv = {}, sources: AnshSources = {}): AnshBrain {
+    brain = new AnshBrain(store, sources, {
+      dataDir: dir,
+      now: () => now,
+      env,
+      runClaude: async (run) => {
+        runs.push(run);
+        return reply();
       },
-    );
+    });
     brain.start();
     return brain;
   }
@@ -283,6 +298,22 @@ describe('the brain', () => {
     now += 1;
     await b.check();
     expect(runs).toHaveLength(2);
+  });
+
+  it('skips claude while the session limit has agents on a break (it would fail too)', async () => {
+    const b = makeBrain({}, { onLimitBreak: () => true });
+    store.set(1, agent(1));
+    store.set(2, agent(2));
+    await b.check();
+    expect(runs).toHaveLength(0);
+    expect(thoughts().map((m) => m.thought)).toEqual([
+      {
+        at: T0,
+        action: 'stay',
+        say: '2 agents are on a break until the limit resets.',
+        aiWritten: false,
+      },
+    ]);
   });
 
   it('stays quiet in an empty office', async () => {

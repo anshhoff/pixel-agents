@@ -43,6 +43,8 @@ export const FUN_TYPE = {
   PIZZA_BOX: 'PIZZA_BOX',
   PIZZA_BOX_OPEN: 'PIZZA_BOX_OPEN',
   PING_PONG_TABLE: 'PING_PONG_TABLE',
+  /** A mug on a table (the limit break's coffee). */
+  COFFEE_MUG: 'COFFEE',
 } as const;
 
 /** Wall items a garland of lights must not cover (they show the time / news). */
@@ -159,3 +161,41 @@ export const PING_PONG_HIT_SEC = 0.7;
 
 /** How often (seconds) idle pastimes (pizza, ping-pong, standup) are considered. */
 export const PASTIME_CHECK_SEC = 15;
+
+// ── Limit break (limitBreak.ts) ───────────────────────────────
+/** Seconds an activity lasts once the agent has got there (a range). */
+export const BREAK_ACTIVITY_MIN_SEC = 60;
+export const BREAK_ACTIVITY_MAX_SEC = 120;
+/** Someone on the break says something every this many seconds (a range). */
+export const BREAK_CHAT_MIN_SEC = 6;
+export const BREAK_CHAT_MAX_SEC = 12;
+/** A line stays up this long. */
+export const BREAK_LINE_SEC = 4.5;
+/** Agents on the break with no free seat stand within this many tiles of the group. */
+export const BREAK_STAND_RADIUS_TILES = 3;
+
+/** `{time}` is the reset ("6:30 pm"), or "the reset" when it isn't known. */
+export const BREAK_AGENT_LINES: readonly string[] = [
+  'so... back at {time}?',
+  'I was two tests away.',
+  'anyone else get cut off mid-edit?',
+  'my context is going to miss me.',
+  'I left a TODO. a big one.',
+  'pizza counts as a break, right?',
+  "I'll pick it up right where I stopped.",
+  'is the meter still red?',
+  'guess we wait for {time}.',
+  'the diff looks fine. probably.',
+];
+export const BREAK_MANAGER_LINES: readonly string[] = [
+  "I'll put the cutoff in tonight's report.",
+  'nobody start anything big until {time}.',
+  'good time to plan the next steps.',
+  'this is why we batch the work.',
+];
+export const BREAK_ANSH_LINES: readonly string[] = [
+  "we're back at {time}, nobody panic.",
+  'I should have paced that better.',
+  'break time, everyone.',
+  'the limit got all of us at once.',
+];
